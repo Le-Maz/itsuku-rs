@@ -1,0 +1,9 @@
+[package]
+name = "itsuku"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake2 = "0.10.6"
+hex-literal = "1.1.0"
+num_cpus = "1.17.0"
