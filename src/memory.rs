@@ -3,9 +3,15 @@ use std::{
     simd::{Simd, ToBytes},
 };
 
-use blake2::{Blake2b512, Digest};
+use blake2::{
+    Blake2bVar,
+    digest::{Update, VariableOutput},
+};
+use bytemuck::checked::cast_slice_mut;
 
-use crate::{challenge_id::ChallengeId, config::Config};
+use crate::{
+    calculate_argon2_index, calculate_phi_variant_index, challenge_id::ChallengeId, config::Config,
+};
 
 const ELEMENT_SIZE: usize = 64;
 const LANES: usize = ELEMENT_SIZE / 8;
@@ -65,19 +71,13 @@ impl Memory {
     pub fn get(&self, index: usize) -> Option<&Element> {
         let chunk = index / self.config.chunk_size;
         let element = index % self.config.chunk_size;
-        if chunk >= self.config.chunk_count {
-            return None;
-        }
-        Some(&self.chunks[chunk][element])
+        self.chunks.get(chunk)?.get(element)
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Element> {
         let chunk = index / self.config.chunk_size;
         let element = index % self.config.chunk_size;
-        if chunk >= self.config.chunk_count {
-            return None;
-        }
-        Some(&mut self.chunks[chunk][element])
+        self.chunks.get_mut(chunk)?.get_mut(element)
     }
 
     fn compression_function(
@@ -87,108 +87,50 @@ impl Memory {
         element_index: usize,
         challenge_id: &ChallengeId,
     ) {
-        // Helper: compute argon2 index from first 4 bytes of previous element
-        fn calculate_argon2_index(seed_bytes: [u8; 4], original_index: usize) -> usize {
-            let seed_integer_value: u64 = u32::from_le_bytes(seed_bytes) as u64;
-
-            // mirror the C arithmetic (shift right 32)
-            let temporary_x = (seed_integer_value.wrapping_mul(seed_integer_value)) >> 32;
-            let temporary_y =
-                (((original_index as u64).wrapping_sub(1)).wrapping_mul(temporary_x)) >> 32;
-            let computed_z_index = (original_index as u64)
-                .wrapping_sub(1)
-                .wrapping_sub(temporary_y);
-            computed_z_index as usize
-        }
-
-        // Helper: compute phi variant index
-        fn compute_phi_variant_index(
-            original_index: usize,
-            argon2_index: usize,
-            variant_identifier: usize,
-        ) -> usize {
-            match variant_identifier {
-                0 => original_index - 1,
-                1 => argon2_index,
-                2 => (argon2_index + original_index) / 2,
-                3 => (original_index * 7) / 8,
-                4 => (argon2_index + 3 * original_index) / 4,
-                5 => (3 * argon2_index + original_index) / 4,
-                _ => original_index - 1,
-            }
-        }
-
-        // Safety / sanity: element_index must be >= antecedent_count for this function to be valid.
         assert!(element_index >= config.antecedent_count);
 
-        // 1) compute antecedents (local to the chunk)
-        // we need seed bytes from X[i-1]
         let prev = &chunk[element_index - 1];
-        // Convert previous element to big-endian byte array
-        let prev_u8_simd = prev.data.to_le_bytes();
-        let prev_bytes: [u8; ELEMENT_SIZE] = prev_u8_simd.to_array();
+        let prev_bytes: [u8; ELEMENT_SIZE] = prev.data.to_le_bytes().to_array();
 
-        // first four bytes used for Argon2 index
         let mut seed_4 = [0u8; 4];
         seed_4.copy_from_slice(&prev_bytes[0..4]);
 
-        let argon2_idx = calculate_argon2_index(seed_4, element_index);
-
+        let argon2_index = calculate_argon2_index(seed_4, element_index);
         let mut antecedents: Vec<usize> = Vec::with_capacity(config.antecedent_count);
         for k in 0..config.antecedent_count {
-            antecedents.push(compute_phi_variant_index(element_index, argon2_idx, k));
+            antecedents.push(calculate_phi_variant_index(element_index, argon2_index, k));
         }
 
-        // clamp to chunk_size just in case (mirror C behaviour loosely)
         let element_count = config.chunk_size;
 
-        // 2) sum even variants into sum_even
         let mut sum_even = Element::zero();
         let even_count = (antecedents.len() + 1) / 2;
         for k in 0..even_count {
-            let idx = antecedents[2 * k];
-            let idx = idx % element_count; // defensive mapping
+            let idx = antecedents[2 * k] % element_count;
             sum_even += &chunk[idx];
         }
 
-        // 3) XOR low 64-bit lane with global element index (pl + i)
         let global_element_index = (chunk_index as u64)
             .wrapping_mul(config.chunk_size as u64)
             .wrapping_add(element_index as u64);
-
-        // mutate first lane directly
         let sum_even_array = sum_even.data.as_mut_array();
-        // XOR the first 64-bit word (like xor_chunk_element_scalar)
         sum_even_array[0] ^= global_element_index;
 
-        // 4) feed sum_even into Blake2b
-        let mut hasher = Blake2b512::new();
-        let sum_even_u8 = sum_even.data.to_le_bytes().to_array();
-        hasher.update(&sum_even_u8);
-
-        // 5) build sum_odd
         let mut sum_odd = Element::zero();
         let odd_count = antecedents.len() / 2;
         for k in 0..odd_count {
-            let idx = antecedents[2 * k + 1];
-            let idx = idx % element_count;
+            let idx = antecedents[2 * k + 1] % element_count;
             sum_odd += &chunk[idx];
         }
-
-        // 6) XOR challenge id bytes into sum_odd
         sum_odd ^= challenge_id.bytes.as_slice();
 
-        // 7) feed sum_odd into hasher
-        hasher.update(sum_odd.data.to_le_bytes().as_array());
+        // ---- Variable-length Blake2b ----
+        let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
+        hasher.update(&sum_even.data.to_le_bytes().to_array());
+        hasher.update(&sum_odd.data.to_le_bytes().to_array());
 
-        // 8) finalize into digest and write back into chunk[element_index]
-        let digest_bytes: [u8; ELEMENT_SIZE] = hasher.finalize().into();
-
-        // convert digest (u8 array) -> Simd<u8, ELEMENT_SIZE> -> Simd<u64, LANES>
-        let simd_u8 = Simd::from_array(digest_bytes);
-        let simd_u64: Simd<u64, LANES> = Simd::from_le_bytes(simd_u8);
-
-        chunk[element_index].data = simd_u64;
+        let output = chunk[element_index].data.as_mut_array().as_mut_slice();
+        hasher.finalize_variable(cast_slice_mut(output)).unwrap();
     }
 
     pub fn build_chunk(
@@ -197,23 +139,16 @@ impl Memory {
         chunk: &mut Vec<Element>,
         challenge_id: &ChallengeId,
     ) {
-        // Initialize first n elements (H_x(i || p || I))
+        // Initialize first n elements
         for element_index in 0..config.antecedent_count {
-            let mut hasher = Blake2b512::new();
-            let idx_bytes = element_index.to_le_bytes();
-            let chunk_idx_bytes = chunk_index.to_le_bytes();
-
-            hasher.update(&idx_bytes);
-            hasher.update(&chunk_idx_bytes);
+            let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
+            hasher.update(&element_index.to_le_bytes());
+            hasher.update(&chunk_index.to_le_bytes());
             hasher.update(&challenge_id.bytes);
-            let bytes: [u8; ELEMENT_SIZE] = hasher.finalize().into();
-            let simd_u8 = Simd::from_array(bytes);
-            let simd_u64: Simd<u64, { ELEMENT_SIZE.div_ceil(8) }> = Simd::from_le_bytes(simd_u8);
-
-            chunk[element_index] = Element { data: simd_u64 };
+            let output = chunk[element_index].data.as_mut_array().as_mut_slice();
+            hasher.finalize_variable(cast_slice_mut(output)).unwrap();
         }
 
-        // Compute remaining elements using compression function
         for element_index in config.antecedent_count..config.chunk_size {
             Self::compression_function(config, chunk_index, chunk, element_index, challenge_id);
         }
