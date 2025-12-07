@@ -99,57 +99,77 @@ impl Memory {
         self.chunks.get_mut(chunk)?.get_mut(element)
     }
 
-    fn compression_function(
+    /// Calculates the antecedent indices for a given element index
+    /// and writes them directly into the provided mutable slice of usize.
+    pub fn get_antecedent_indices(
         config: &Config,
-        chunk_index: usize,
-        chunk: &mut Vec<Element>,
+        chunk: &[Element],
         element_index: usize,
-        challenge_id: &ChallengeId,
+        index_buffer: &mut [usize],
     ) {
-        assert!(element_index >= config.antecedent_count);
+        let antecedent_count = config.antecedent_count;
+        assert!(element_index >= antecedent_count);
+        assert_eq!(index_buffer.len(), antecedent_count);
 
+        // This logic is driven by the element *before* the current one
         let prev = &chunk[element_index - 1];
         let prev_bytes: [u8; ELEMENT_SIZE] = prev.data.to_le_bytes().to_array();
 
         let mut seed_4 = [0u8; 4];
         seed_4.copy_from_slice(&prev_bytes[0..4]);
-
         let argon2_index = calculate_argon2_index(seed_4, element_index);
-        let mut antecedents: Vec<usize> = Vec::with_capacity(config.antecedent_count);
-        for k in 0..config.antecedent_count {
-            antecedents.push(calculate_phi_variant_index(element_index, argon2_index, k));
-        }
 
         let element_count = config.chunk_size;
 
+        for variant in 0..antecedent_count {
+            let idx = calculate_phi_variant_index(element_index, argon2_index, variant);
+            let idx_mod = idx % element_count;
+
+            index_buffer[variant] = idx_mod;
+        }
+    }
+
+    /// The core compression function, decoupled from memory access.
+    /// It computes a new Element given its antecedent Elements.
+    pub fn compress(
+        antecedents: &[Element],
+        global_element_index: u64,
+        challenge_id: &ChallengeId,
+    ) -> Element {
+        // 1. Calculate Sum Even
         let mut sum_even = Element::zero();
         let even_count = (antecedents.len() + 1) / 2;
         for k in 0..even_count {
-            let idx = antecedents[2 * k] % element_count;
-            sum_even += &chunk[idx];
+            sum_even += &antecedents[2 * k];
         }
 
-        let global_element_index = (chunk_index as u64)
-            .wrapping_mul(config.chunk_size as u64)
-            .wrapping_add(element_index as u64);
-        let sum_even_array = sum_even.data.as_mut_array();
+        // Apply XOR modification
+        let mut sum_even_mut = sum_even;
+        let sum_even_array = sum_even_mut.data.as_mut_array();
         sum_even_array[0] ^= global_element_index;
 
+        // 2. Calculate Sum Odd
         let mut sum_odd = Element::zero();
         let odd_count = antecedents.len() / 2;
         for k in 0..odd_count {
-            let idx = antecedents[2 * k + 1] % element_count;
-            sum_odd += &chunk[idx];
+            sum_odd += &antecedents[2 * k + 1];
         }
-        sum_odd ^= challenge_id.bytes.as_slice();
 
-        // ---- Variable-length Blake2b ----
+        // Apply XOR modification
+        let mut sum_odd_mut = sum_odd;
+        sum_odd_mut ^= challenge_id.bytes.as_slice();
+
+        // 3. Variable-length Blake2b
         let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
-        hasher.update(&sum_even.data.to_le_bytes().to_array());
-        hasher.update(&sum_odd.data.to_le_bytes().to_array());
+        hasher.update(&sum_even_mut.data.to_le_bytes().to_array());
+        hasher.update(&sum_odd_mut.data.to_le_bytes().to_array());
 
-        let output = chunk[element_index].data.as_mut_array().as_mut_slice();
-        hasher.finalize_variable(cast_slice_mut(output)).unwrap();
+        let mut output = Element::zero();
+        let output_bytes = output.data.as_mut_array();
+        let output_slice = cast_slice_mut(output_bytes);
+        hasher.finalize_variable(output_slice).unwrap();
+
+        output
     }
 
     pub fn build_chunk(
@@ -158,7 +178,7 @@ impl Memory {
         chunk: &mut Vec<Element>,
         challenge_id: &ChallengeId,
     ) {
-        // Initialize first n elements
+        // Initialize first n elements (allocation-free)
         for element_index in 0..config.antecedent_count {
             let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
             hasher.update(&element_index.to_le_bytes());
@@ -168,8 +188,29 @@ impl Memory {
             hasher.finalize_variable(cast_slice_mut(output)).unwrap();
         }
 
-        for element_index in config.antecedent_count..config.chunk_size {
-            Self::compression_function(config, chunk_index, chunk, element_index, challenge_id);
+        // Allocate the reusable index buffer once for the whole chunk
+        let mut index_buffer = vec![0; config.antecedent_count];
+        let mut antecedents = Vec::with_capacity(config.antecedent_count);
+        let antecedent_count = config.antecedent_count;
+        let element_count = config.chunk_size;
+
+        for element_index in antecedent_count..element_count {
+            // 1. Calculate and store Antecedent Indices into the reusable buffer
+            Self::get_antecedent_indices(config, chunk, element_index, &mut index_buffer);
+
+            // 2. Retrieve Antecedent Elements
+            let antedecent_iter = index_buffer.iter().map(|&idx| chunk[idx % element_count]);
+            antecedents.extend(antedecent_iter);
+
+            // 3. Perform Compression
+            let global_element_index = (chunk_index as u64)
+                .wrapping_mul(config.chunk_size as u64)
+                .wrapping_add(element_index as u64);
+            let new_element = Self::compress(&antecedents, global_element_index, challenge_id);
+            antecedents.clear();
+
+            // Write the result back into the chunk
+            chunk[element_index] = new_element;
         }
     }
 
@@ -189,36 +230,25 @@ impl Memory {
         });
     }
 
+    /// Traces the element's antecedents
     pub fn trace_element(&self, leaf_index: usize) -> Vec<Element> {
+        let antecedent_count = self.config.antecedent_count;
+
         let chunk_index = leaf_index / self.config.chunk_size;
         let chunk = &self.chunks[chunk_index];
 
         let element_index = leaf_index % self.config.chunk_size;
 
         // Case 1: A base element — it has no antecedents by definition.
-        if element_index < self.config.antecedent_count {
+        if element_index < antecedent_count {
+            // Just return the element itself as the "trace" of size 1.
             return vec![chunk[element_index]];
         }
 
         // Case 2: Compute the antecedents exactly like the compression function
-        let prev = &chunk[element_index - 1];
-        let prev_bytes: [u8; ELEMENT_SIZE] = prev.data.to_le_bytes().to_array();
-
-        let mut seed_4 = [0u8; 4];
-        seed_4.copy_from_slice(&prev_bytes[0..4]);
-
-        let argon2_index = calculate_argon2_index(seed_4, element_index);
-
-        let mut trace = Vec::with_capacity(self.config.antecedent_count);
-        let element_count = self.config.chunk_size;
-
-        for antecedent in 0..self.config.antecedent_count {
-            let idx = calculate_phi_variant_index(element_index, argon2_index, antecedent);
-            let idx_mod = idx % element_count;
-            trace.push(chunk[idx_mod]);
-        }
-
-        trace
+        let mut indices = vec![0; antecedent_count];
+        Self::get_antecedent_indices(&self.config, chunk, element_index, &mut indices);
+        indices.into_iter().map(|idx| chunk[idx]).collect()
     }
 }
 
@@ -397,6 +427,60 @@ mod tests {
                 "Mismatch at element {}:\nRust: {:02x?}\nC:    {:02x?}",
                 i, rust_bytes, EXPECTED[i]
             );
+        }
+    }
+
+    #[test]
+    fn test_trace_element_reproducibility() {
+        use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
+
+        // --- Setup ---
+        let mut challenge_bytes = [0u8; 64];
+        for i in 0..64 {
+            challenge_bytes[i] = i as u8;
+        }
+        let challenge_id = ChallengeId {
+            bytes: challenge_bytes.into(),
+        };
+
+        let mut config = Config::default();
+        config.chunk_count = 2;
+        config.chunk_size = 8;
+        config.antecedent_count = 4;
+
+        let mut memory = Memory::new(config);
+        memory.build_all_chunks(&challenge_id);
+
+        // Iterate over ALL elements and verify that tracing and recomputing works
+        let total_elements = config.chunk_count * config.chunk_size;
+        let antecedent_count = config.antecedent_count;
+        let chunk_size = config.chunk_size;
+
+        for global_index in antecedent_count..total_elements {
+            // 1. Trace antecedents
+            let antecedents = memory.trace_element(global_index);
+
+            if global_index % chunk_size < antecedent_count {
+                assert_eq!(antecedents.len(), 1);
+                continue;
+            }
+
+            // trace_element for a compressed element should return exactly antecedent_count elements.
+            assert_eq!(
+                antecedents.len(),
+                antecedent_count,
+                "Trace length is incorrect for element index {}",
+                global_index
+            );
+
+            // 2. Re-compute the element using the traced antecedents
+            let recomputed_element =
+                Memory::compress(&antecedents, global_index as u64, &challenge_id);
+
+            // 3. Assert that the recomputed element matches the original element
+            let original_element = memory.get(global_index).unwrap();
+
+            assert_eq!(original_element, &recomputed_element);
         }
     }
 }

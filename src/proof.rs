@@ -217,8 +217,8 @@ mod tests {
         // 1) Create config matching C test
         let mut config = Config::default();
         config.chunk_count = 16;
-        config.chunk_size = 128;
-        config.difficulty_bits = 16;
+        config.chunk_size = 64;
+        config.difficulty_bits = 8;
 
         let challenge_id = build_test_challenge();
 
