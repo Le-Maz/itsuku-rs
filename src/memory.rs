@@ -3,6 +3,7 @@ use std::{
     simd::{Simd, ToBytes},
 };
 
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use blake2::{
     Blake2bVar,
     digest::{Update, VariableOutput},
@@ -37,6 +38,12 @@ impl Element {
         Self {
             data: Simd::from_array([0; LANES]),
         }
+    }
+
+    /// Convert Element → base64 of its 64-byte little-endian encoding.
+    pub fn to_base64(&self) -> String {
+        let bytes: [u8; 64] = self.data.to_le_bytes().to_array();
+        BASE64_URL_SAFE_NO_PAD.encode(&bytes)
     }
 }
 
@@ -180,6 +187,38 @@ impl Memory {
                 });
             }
         });
+    }
+
+    pub fn trace_element(&self, leaf_index: usize) -> Vec<Element> {
+        let chunk_index = leaf_index / self.config.chunk_size;
+        let chunk = &self.chunks[chunk_index];
+
+        let element_index = leaf_index % self.config.chunk_size;
+
+        // Case 1: A base element — it has no antecedents by definition.
+        if element_index < self.config.antecedent_count {
+            return vec![chunk[element_index]];
+        }
+
+        // Case 2: Compute the antecedents exactly like the compression function
+        let prev = &chunk[element_index - 1];
+        let prev_bytes: [u8; ELEMENT_SIZE] = prev.data.to_le_bytes().to_array();
+
+        let mut seed_4 = [0u8; 4];
+        seed_4.copy_from_slice(&prev_bytes[0..4]);
+
+        let argon2_index = calculate_argon2_index(seed_4, element_index);
+
+        let mut trace = Vec::with_capacity(self.config.antecedent_count);
+        let element_count = self.config.chunk_size;
+
+        for antecedent in 0..self.config.antecedent_count {
+            let idx = calculate_phi_variant_index(element_index, argon2_index, antecedent);
+            let idx_mod = idx % element_count;
+            trace.push(chunk[idx_mod]);
+        }
+
+        trace
     }
 }
 

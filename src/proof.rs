@@ -1,9 +1,13 @@
 use std::{
+    collections::BTreeMap,
+    fmt::{Display, Formatter},
     simd::ToBytes,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::OnceLock,
 };
 
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use blake2::{Blake2b512, Digest};
+use bytes::Bytes;
 
 use crate::{
     challenge_id::ChallengeId,
@@ -15,6 +19,38 @@ use crate::{
 #[derive(Debug)]
 pub struct Proof {
     nonce: u64,
+    leaf_antecedents: BTreeMap<usize, Vec<Element>>,
+    tree_opening: BTreeMap<usize, Bytes>,
+}
+
+impl Display for Proof {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "(proof")?;
+
+        // nonce
+        writeln!(f, "  (nonce {})", self.nonce)?;
+
+        // leaf antecedents
+        writeln!(f, "  (leaf_antecedents")?;
+        for (leaf_idx, elems) in &self.leaf_antecedents {
+            write!(f, "    ({leaf_idx} (")?;
+            for elem in elems {
+                write!(f, "\"{}\" ", elem.to_base64())?;
+            }
+            writeln!(f, "))")?;
+        }
+        writeln!(f, "  )")?;
+
+        // tree opening
+        writeln!(f, "  (tree_opening")?;
+        for (node_idx, bytes) in &self.tree_opening {
+            let b64 = BASE64_URL_SAFE_NO_PAD.encode(bytes);
+            writeln!(f, "    ({node_idx} \"{b64}\")")?;
+        }
+        writeln!(f, "  )")?;
+
+        write!(f, ")")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -22,6 +58,7 @@ struct SearchParams<'a> {
     config: Config,
     challenge_id: &'a ChallengeId,
     memory: &'a Memory,
+    merkle_tree: &'a MerkleTree,
     root_hash: &'a [u8],
 }
 
@@ -34,8 +71,7 @@ impl Proof {
     ) -> Self {
         let root_hash = merkle_tree.get_node(0).unwrap().to_vec();
 
-        let stop_flag = AtomicBool::new(false);
-        let winner_nonce = AtomicU64::new(0);
+        let proof_slot = OnceLock::new();
 
         let threads = num_cpus::get();
         let chunk = u64::MAX / threads as u64;
@@ -50,39 +86,30 @@ impl Proof {
                 };
 
                 let root_hash = &root_hash;
-                let stop_flag = &stop_flag;
-                let winner_nonce = &winner_nonce;
+                let proof_slot = &proof_slot;
                 let params = SearchParams {
                     config,
                     challenge_id,
                     memory,
+                    merkle_tree,
                     root_hash,
                 };
 
-                scope.spawn(move || {
-                    Self::search_worker(params, start, end, stop_flag, winner_nonce)
-                });
+                scope.spawn(move || Self::search_worker(params, start, end, proof_slot));
             }
         });
-        Proof {
-            nonce: winner_nonce.load(Ordering::Relaxed),
-        }
+        proof_slot.into_inner().unwrap()
     }
 
-    fn search_worker(
-        params: SearchParams,
-        start: u64,
-        end: u64,
-        stop_flag: &AtomicBool,
-        winner_nonce: &AtomicU64,
-    ) {
+    fn search_worker(params: SearchParams, start: u64, end: u64, proof_slot: &OnceLock<Proof>) {
         let mut hasher = Blake2b512::new();
+        let mut selected_leaves = Vec::with_capacity(params.config.search_length);
         let mut path: Vec<[u8; 64]> = Vec::with_capacity(params.config.search_length + 1);
-        let memory_size = (params.config.chunk_count * params.config.chunk_size) as u64;
+        let memory_size = params.config.chunk_count * params.config.chunk_size;
 
         for nonce in start..=end {
             // If another thread found a solution, exit
-            if stop_flag.load(Ordering::Relaxed) {
+            if proof_slot.get().is_some() {
                 return;
             }
 
@@ -96,9 +123,12 @@ impl Proof {
             for _ in 1..=params.config.search_length {
                 let prev_hash = path.last().unwrap();
 
-                let index = u64::from_le_bytes(*prev_hash.first_chunk().unwrap()) % memory_size;
+                // Might need to be replaced with modulo of the whole hash
+                let index =
+                    (u64::from_le_bytes(*prev_hash.first_chunk().unwrap()) as usize) % memory_size;
+                selected_leaves.push(index);
 
-                let mut element = *params.memory.get(index as usize).unwrap();
+                let mut element = *params.memory.get(index).unwrap();
                 element ^= params.challenge_id.bytes.as_slice();
 
                 hasher.update(prev_hash);
@@ -122,13 +152,28 @@ impl Proof {
 
             let omega: [u8; 64] = hasher.finalize_reset().into();
 
-            if Self::leading_zeros(omega) >= params.config.difficulty_bits {
-                winner_nonce.store(nonce, Ordering::SeqCst);
-                stop_flag.store(true, Ordering::SeqCst);
-                return;
+            // ---- step 7: check difficulty ----
+            if Self::leading_zeros(omega) < params.config.difficulty_bits {
+                selected_leaves.clear();
+                path.clear();
+                continue;
             }
 
-            path.clear();
+            // ---- step 8: construct proof ----
+            let mut tree_opening = BTreeMap::new();
+            let mut leaf_antecedents = BTreeMap::new();
+            for &leaf_index in &selected_leaves {
+                let node_index = memory_size + leaf_index;
+                leaf_antecedents.insert(leaf_index, params.memory.trace_element(leaf_index));
+                params.merkle_tree.trace_node(node_index, &mut tree_opening);
+            }
+            let proof = Proof {
+                nonce,
+                leaf_antecedents,
+                tree_opening,
+            };
+            proof_slot.set(proof).ok();
+            return;
         }
     }
 
@@ -189,6 +234,6 @@ mod tests {
         merkle_tree.compute_intermediate_nodes(&challenge_id);
 
         let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
-        println!("{:#?}", proof);
+        println!("{}", proof);
     }
 }

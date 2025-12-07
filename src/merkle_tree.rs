@@ -1,9 +1,10 @@
-use std::{ops::Range, simd::ToBytes};
+use std::{collections::BTreeMap, ops::Range, simd::ToBytes};
 
 use blake2::{
     Blake2bVar,
     digest::{Update, VariableOutput},
 };
+use bytes::Bytes;
 
 use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
 
@@ -123,6 +124,23 @@ impl MerkleTree {
             let parent_node = self.get_node_mut(parent_index).unwrap();
             hasher.finalize_variable(parent_node).unwrap();
         }
+    }
+
+    pub fn trace_node(&self, index: usize, nodes: &mut BTreeMap<usize, Bytes>) {
+        if let Some(node) = self.get_node(index) {
+            nodes.insert(index, Bytes::copy_from_slice(node));
+        }
+        if index == 0 {
+            return;
+        }
+
+        let sibling_index = if index % 2 == 0 { index - 1 } else { index + 1 };
+        if let Some(node) = self.get_node(sibling_index) {
+            nodes.insert(sibling_index, Bytes::copy_from_slice(node));
+        }
+
+        let parent_index = (index - 1) / 2;
+        Self::trace_node(self, parent_index, nodes);
     }
 }
 

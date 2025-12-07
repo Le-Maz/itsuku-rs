@@ -71,9 +71,6 @@ fn build_challenge_from_hex(hex_str: &str) -> ChallengeId {
     ChallengeId { bytes: decoded }
 }
 
-// -------------------------------
-// main()
-// -------------------------------
 fn main() {
     let cli = Cli::parse();
 
@@ -100,7 +97,7 @@ fn main() {
                 None => build_random_challenge(),
             };
 
-            println!("Challenge ID: {}", hex::encode(&challenge_id.bytes));
+            eprintln!("Challenge ID: {}", hex::encode(&challenge_id.bytes));
 
             // Build memory
             let mut memory = Memory::new(config);
@@ -113,7 +110,7 @@ fn main() {
 
             // Run proof search
             let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
-            println!("Found proof: {:?}", proof);
+            println!("{}", proof);
         }
 
         Commands::Verify => todo!(),
