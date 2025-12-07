@@ -6,7 +6,11 @@ use blake2::{
 };
 use bytes::Bytes;
 
-use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
+use crate::{
+    challenge_id::ChallengeId,
+    config::Config,
+    memory::{Element, Memory},
+};
 
 const MEMORY_COST_CX: f64 = 1.0;
 const NODES_PER_FRAGMENT: usize = 1024;
@@ -18,7 +22,7 @@ pub struct MerkleTree {
 }
 
 impl MerkleTree {
-    fn calculate_node_size(config: &Config) -> usize {
+    pub fn calculate_node_size(config: &Config) -> usize {
         let search_length = config.search_length as f64;
         let difficulty = config.difficulty_bits as f64;
 
@@ -65,6 +69,20 @@ impl MerkleTree {
         self.fragments.get_mut(fragment)?.get_mut(range)
     }
 
+    pub fn compute_leaf_hash(
+        challenge_id: &ChallengeId,
+        element: &Element,
+        node_size: usize,
+        output: &mut [u8],
+    ) {
+        let mut hasher = Blake2bVar::new(node_size).unwrap();
+
+        hasher.update(&element.data.to_le_bytes().to_array());
+        hasher.update(&challenge_id.bytes);
+
+        hasher.finalize_variable(output).unwrap();
+    }
+
     pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory) {
         let element_count = self.config.chunk_count * self.config.chunk_size;
         let threads = num_cpus::get();
@@ -95,11 +113,7 @@ impl MerkleTree {
                             let element_index = global_node_index - (element_count - 1);
                             let element = memory.get(element_index).unwrap();
 
-                            let mut hasher = Blake2bVar::new(node_size).unwrap();
-                            hasher.update(&element.data.to_le_bytes().to_array());
-                            hasher.update(&challenge_id.bytes);
-
-                            hasher.finalize_variable(chunk).unwrap();
+                            Self::compute_leaf_hash(challenge_id, element, node_size, chunk);
 
                             global_node_index += 1;
                         }
@@ -109,20 +123,45 @@ impl MerkleTree {
         });
     }
 
+    pub fn compute_intermediate_hash(
+        challenge_id: &ChallengeId,
+        left: &[u8],
+        right: &[u8],
+        node_size: usize,
+    ) -> impl FnOnce(&mut [u8]) + use<> {
+        let mut hasher = Blake2bVar::new(node_size).unwrap();
+
+        hasher.update(left);
+        hasher.update(right);
+        hasher.update(&challenge_id.bytes);
+
+        |output| hasher.finalize_variable(output).unwrap()
+    }
+
+    pub fn children_of(index: usize) -> (usize, usize) {
+        let left_index = 2 * index + 1;
+        let right_index = 2 * index + 2;
+        (left_index, right_index)
+    }
+
     pub fn compute_intermediate_nodes(&mut self, challenge_id: &ChallengeId) {
         let total_elements = self.config.chunk_count * self.config.chunk_size;
 
         for parent_index in (0..total_elements - 1).rev() {
-            let mut hasher = Blake2bVar::new(self.node_size).unwrap();
-            let left = self.get_node(2 * parent_index + 1).unwrap();
-            let right = self.get_node(2 * parent_index + 2).unwrap();
+            let (left_index, right_index) = Self::children_of(parent_index);
 
-            hasher.update(left);
-            hasher.update(right);
-            hasher.update(&challenge_id.bytes);
+            let left_node = self.get_node(left_index).unwrap();
+            let right_node = self.get_node(right_index).unwrap();
+
+            let compute_hash = Self::compute_intermediate_hash(
+                challenge_id,
+                left_node,
+                right_node,
+                self.node_size,
+            );
 
             let parent_node = self.get_node_mut(parent_index).unwrap();
-            hasher.finalize_variable(parent_node).unwrap();
+            compute_hash(parent_node);
         }
     }
 
