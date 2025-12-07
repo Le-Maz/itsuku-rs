@@ -41,7 +41,7 @@ rustup default nightly
 Clone the repository and build using Cargo:
 
 ```bash
-git clone [https://github.com/Le-Maz/itsuku-rs.git](https://github.com/Le-Maz/itsuku-rs.git)
+git clone https://github.com/Le-Maz/itsuku-rs.git
 cd itsuku-rs
 cargo build --release
 ```
