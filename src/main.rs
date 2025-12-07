@@ -119,12 +119,13 @@ fn run_search(
     search_length: usize,
     challenge_id_b64: Option<String>,
 ) {
-    let mut config = Config::default();
-    config.chunk_count = chunk_count;
-    config.chunk_size = chunk_size;
-    config.difficulty_bits = difficulty_bits;
-    config.antecedent_count = antecedent_count;
-    config.search_length = search_length;
+    let config = Config {
+        chunk_count,
+        chunk_size,
+        difficulty_bits,
+        antecedent_count,
+        search_length,
+    };
 
     let challenge_id = match challenge_id_b64 {
         Some(b64_str) => build_challenge_from_b64(&b64_str),
@@ -176,7 +177,6 @@ fn run_verify(
         difficulty_bits,
         antecedent_count,
         search_length,
-        ..Config::default()
     };
     let challenge_id = build_challenge_from_b64(&challenge_id_b64);
 
@@ -201,17 +201,21 @@ fn run_verify(
     eprintln!("VERIFY.INPUT.END");
 
     eprintln!("VERIFY.EXEC.START");
-    let is_valid = proof.verify(&config, &challenge_id);
+    let result = proof.verify(&config, &challenge_id);
     eprintln!("VERIFY.EXEC.END");
 
-    if is_valid {
-        eprintln!("VALID");
-        eprintln!("VERIFY.RESULT");
-        eprintln!("valid=true");
-    } else {
-        eprintln!("INVALID");
-        eprintln!("VERIFY.RESULT");
-        eprintln!("valid=false");
-        std::process::exit(1);
+    match result {
+        Ok(()) => {
+            eprintln!("VALID");
+            eprintln!("VERIFY.RESULT");
+            eprintln!("valid=true");
+        }
+        Err(error) => {
+            eprintln!("INVALID");
+            eprintln!("VERIFY.RESULT");
+            eprintln!("valid=false");
+            eprintln!("reason={}", error);
+            std::process::exit(1);
+        }
     }
 }

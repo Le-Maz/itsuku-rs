@@ -293,14 +293,13 @@ impl Proof {
 
     /// Verifies the PoW proof against the challenge (I) and configuration.
     ///
-    /// The verification algorithm follows the steps described in the paper (Section 4):
-    /// 1. With I and L, compute memory leaves X[i_j] from the antecedents.
-    /// 2. With X[i_j], L and the opening Z, compute Phi (the root hash) of the Merkle tree.
-    /// 3. With N, Phi, I and X[i_j] compute Omega and check that the selected indexes I match and that Omega has **d** leading zeros.
-    ///
     /// ## Returns
-    /// `true` if the proof is valid, `false` otherwise.
-    pub fn verify(&self, config: &Config, challenge_id: &ChallengeId) -> bool {
+    /// `Ok(())` if the proof is valid, or a `VerificationError` otherwise.
+    pub fn verify(
+        &self,
+        config: &Config,
+        challenge_id: &ChallengeId,
+    ) -> Result<(), VerificationError> {
         let node_size = MerkleTree::calculate_node_size(config);
         let memory_size = config.chunk_count * config.chunk_size;
 
@@ -317,29 +316,30 @@ impl Proof {
                     let element = Memory::compress(antacedents, *index as u64, challenge_id);
                     partial_memory.insert(*index, element);
                 }
-                _ => {
+                n => {
                     // Invalid antecedent count
-                    return false;
+                    return Err(VerificationError::InvalidAntecedentCount(n));
                 }
             }
         }
 
         // Step 2: Rebuild Merkle path and verify against tree opening (Z)
-        let mut merkle_nodes = HashMap::new();
+        let mut merkle_nodes = HashMap::new(); // Stores verified/provided hashes
 
         // A. Verify the hashes of the selected leaves X[i_j]
         for (leaf_index, element) in partial_memory.iter() {
             let node_index = memory_size - 1 + leaf_index;
             let mut leaf_hash = vec![0u8; node_size];
-            // The Merkle tree hash function H_M^I(e)=H_M(e||I) is challenge-specific
+
+            // Compute leaf hash: H_M^I(e)=H_M(e||I)
             MerkleTree::compute_leaf_hash(challenge_id, element, node_size, &mut leaf_hash);
 
             // Check if the computed leaf hash matches the provided opening hash
             let Some(opened_hash) = self.tree_opening.get(&node_index) else {
-                return false; // Missing opening for a required leaf
+                return Err(VerificationError::MissingOpeningForLeaf(*leaf_index));
             };
             if opened_hash.as_ref() != leaf_hash.as_slice() {
-                return false; // Leaf hash mismatch
+                return Err(VerificationError::LeafHashMismatch(*leaf_index));
             }
             // Store the verified leaf hash
             merkle_nodes.insert(node_index, Bytes::from(leaf_hash));
@@ -352,31 +352,51 @@ impl Proof {
             }
 
             let (left_index, right_index) = MerkleTree::children_of(node_index);
-            if let Some(left_child) = merkle_nodes.get(&left_index)
-                && let Some(right_child) = merkle_nodes.get(&right_index)
-            {
-                // Compute intermediate hash: B[i]=H_M^I(B[2i+1]||B[2i+2])
-                let compute_hash = MerkleTree::compute_intermediate_hash(
-                    challenge_id,
-                    left_child,
-                    right_child,
-                    node_size,
-                );
-                let mut computed_hash = vec![0u8; node_size];
-                compute_hash(&mut computed_hash);
 
-                // Check if the computed intermediate hash matches the opened hash
-                if computed_hash.as_slice() != opened_hash.as_ref() {
-                    return false; // Intermediate node hash mismatch
-                }
+            // Attempt to get children from verified/stored nodes OR from the opening itself
+            let left_child = merkle_nodes
+                .get(&left_index)
+                .or_else(|| self.tree_opening.get(&left_index));
+            let right_child = merkle_nodes
+                .get(&right_index)
+                .or_else(|| self.tree_opening.get(&right_index));
+
+            if left_child.is_none() && right_child.is_none() {
+                // This node is not a parent of any verified leaf and is not part of the path from a verified leaf to the root.
+                // We simply store the provided hash for potential future use (e.g., if it's a root/partial tree node)
+                merkle_nodes.insert(node_index, opened_hash.clone());
+                continue;
+            }
+
+            // At least one child is present, so we must be able to verify this parent hash.
+            let Some(left_child) = left_child else {
+                return Err(VerificationError::MissingChildNode(left_index));
             };
+            let Some(right_child) = right_child else {
+                return Err(VerificationError::MissingChildNode(right_index));
+            };
+
+            // Compute intermediate hash: B[i]=H_M^I(B[2i+1]||B[2i+2])
+            let compute_hash = MerkleTree::compute_intermediate_hash(
+                challenge_id,
+                left_child,
+                right_child,
+                node_size,
+            );
+            let mut computed_hash = vec![0u8; node_size];
+            compute_hash(&mut computed_hash);
+
+            // Check if the computed intermediate hash matches the opened hash
+            if computed_hash.as_slice() != opened_hash.as_ref() {
+                return Err(VerificationError::IntermediateHashMismatch(node_index));
+            }
             // Store the verified intermediate hash
             merkle_nodes.insert(node_index, opened_hash.clone());
         }
 
         // Final check: The root hash (Phi) must be present
         let Some(root_hash) = merkle_nodes.get(&0) else {
-            return false; // Missing Merkle Root hash
+            return Err(VerificationError::MissingMerkleRoot);
         };
 
         // Step 3: Verify Omega hash
@@ -401,21 +421,75 @@ impl Proof {
         );
 
         // Check 3.1: Ensure the recalculated path (I) matches the leaves provided in the proof
+        // We check if *any* of the selected leaves is NOT present in the proven antecedents.
         if selected_leaves
             .iter()
             .any(|leaf| !self.leaf_antecedents.contains_key(leaf))
         {
-            return false; // Recalculated path includes unproven leaves
+            return Err(VerificationError::UnprovenLeafInPath);
         }
 
-        // Check 3.2: Check difficulty
-        // Check that Omega has **d** binary leading zeros
+        // Check 3.2: Check difficulty (d)
         if Self::leading_zeros(omega) < config.difficulty_bits {
-            return false; // Difficulty not met
+            return Err(VerificationError::DifficultyNotMet);
         }
 
         // If all checks pass, the proof is valid.
-        true
+        Ok(())
+    }
+}
+
+/// Specific errors that can occur during Proof-of-Work verification.
+#[derive(Debug)]
+pub enum VerificationError {
+    InvalidAntecedentCount(usize),
+    MissingOpeningForLeaf(usize),
+    LeafHashMismatch(usize),
+    IntermediateHashMismatch(usize),
+    MissingMerkleRoot,
+    MalformedProofPath,
+    UnprovenLeafInPath,
+    DifficultyNotMet,
+    RequiredElementMissing(usize),
+    MissingChildNode(usize),
+}
+
+impl Display for VerificationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationError::InvalidAntecedentCount(count) => {
+                write!(f, "Invalid antecedent count: {}", count)
+            }
+            VerificationError::MissingOpeningForLeaf(idx) => {
+                write!(f, "Missing Merkle opening for required leaf index: {}", idx)
+            }
+            VerificationError::LeafHashMismatch(idx) => {
+                write!(f, "Computed leaf hash mismatch for index: {}", idx)
+            }
+            VerificationError::IntermediateHashMismatch(idx) => {
+                write!(f, "Computed intermediate hash mismatch for index: {}", idx)
+            }
+            VerificationError::MissingMerkleRoot => write!(f, "Missing Merkle Root hash (Phi)"),
+            VerificationError::MalformedProofPath => write!(
+                f,
+                "The Merkle path structure in the proof opening is malformed"
+            ),
+            VerificationError::UnprovenLeafInPath => write!(
+                f,
+                "Recalculated path includes leaves not provided in the proof"
+            ),
+            VerificationError::DifficultyNotMet => {
+                write!(f, "Proof difficulty not met (insufficient leading zeros)")
+            }
+            VerificationError::RequiredElementMissing(idx) => {
+                write!(f, "Required memory element missing at index: {}", idx)
+            }
+            VerificationError::MissingChildNode(idx) => write!(
+                f,
+                "Missing child node required to verify parent hash at index: {}",
+                idx
+            ),
+        }
     }
 }
 
@@ -470,8 +544,8 @@ mod tests {
 
     fn build_test_challenge() -> ChallengeId {
         let mut bytes = [0u8; 64];
-        for i in 0..64 {
-            bytes[i] = i as u8;
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = i as u8;
         }
         ChallengeId {
             bytes: bytes.to_vec(),
@@ -481,11 +555,12 @@ mod tests {
     #[test]
     fn solves_and_verifies() {
         // 1) Create config matching C test
-        let mut config = Config::default();
-        config.chunk_count = 16;
-        config.chunk_size = 64;
-        // Setting a low difficulty to ensure the test passes quickly
-        config.difficulty_bits = 8;
+        let config = Config {
+            chunk_count: 16,
+            chunk_size: 64,
+            difficulty_bits: 8,
+            ..Config::default()
+        };
 
         let challenge_id = build_test_challenge();
 
@@ -505,7 +580,7 @@ mod tests {
 
         // 5) Verify the proof
         assert!(
-            proof.verify(&config, &challenge_id),
+            proof.verify(&config, &challenge_id).is_ok(),
             "Proof failed verification"
         );
     }

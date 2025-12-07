@@ -82,7 +82,7 @@ impl Element {
     /// Convert Element → base64 of its 64-byte little-endian encoding.
     pub fn to_base64(&self) -> String {
         let bytes: [u8; 64] = self.data.to_le_bytes().to_array();
-        BASE64_URL_SAFE_NO_PAD.encode(&bytes)
+        BASE64_URL_SAFE_NO_PAD.encode(bytes)
     }
 }
 
@@ -160,11 +160,11 @@ impl Memory {
 
         let element_count = config.chunk_size;
 
-        for variant in 0..antecedent_count {
+        for (variant, index_slot) in index_buffer.iter_mut().enumerate() {
             let idx = calculate_phi_variant_index(element_index, argon2_index, variant);
             let idx_mod = idx % element_count;
 
-            index_buffer[variant] = idx_mod;
+            *index_slot = idx_mod;
         }
     }
 
@@ -177,7 +177,7 @@ impl Memory {
     ) -> Element {
         // 1. Calculate Sum Even
         let mut sum_even = Element::zero();
-        let even_count = (antecedents.len() + 1) / 2;
+        let even_count = antecedents.len().div_ceil(2);
         for k in 0..even_count {
             sum_even += &antecedents[2 * k];
         }
@@ -214,16 +214,16 @@ impl Memory {
     pub fn build_chunk(
         config: &Config,
         chunk_index: usize,
-        chunk: &mut Vec<Element>,
+        chunk: &mut [Element],
         challenge_id: &ChallengeId,
     ) {
         // Initialize first n elements (allocation-free)
-        for element_index in 0..config.antecedent_count {
+        for (element_index, element) in chunk.iter_mut().enumerate() {
             let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
             hasher.update(&element_index.to_le_bytes());
             hasher.update(&chunk_index.to_le_bytes());
             hasher.update(&challenge_id.bytes);
-            let output = chunk[element_index].data.as_mut_array().as_mut_slice();
+            let output = element.data.as_mut_array().as_mut_slice();
             hasher.finalize_variable(cast_slice_mut(output)).unwrap();
         }
 
@@ -293,6 +293,7 @@ impl Memory {
 
 #[cfg(test)]
 mod tests {
+    use crate::{config::Config, memory::Memory};
     use hex_literal::hex;
 
     use super::*;
@@ -336,8 +337,8 @@ mod tests {
         simd_res ^= &el2;
 
         let mut scalar_res = [0u64; LANES];
-        for i in 0..LANES {
-            scalar_res[i] = el1.data[i] ^ el2.data[i];
+        for (i, res_part) in scalar_res.iter_mut().enumerate() {
+            *res_part = el1.data[i] ^ el2.data[i];
         }
 
         assert_eq!(simd_res.data.to_array(), scalar_res);
@@ -359,8 +360,9 @@ mod tests {
         simd_res += &el2;
 
         let mut scalar_res = [0u64; LANES];
-        for i in 0..LANES {
-            scalar_res[i] = el1.data[i].wrapping_add(el2.data[i]);
+
+        for (i, res_part) in scalar_res.iter_mut().enumerate() {
+            *res_part = el1.data[i].wrapping_add(el2.data[i]);
         }
 
         assert_eq!(simd_res.data.to_array(), scalar_res);
@@ -377,8 +379,8 @@ mod tests {
 
         // Construct a 64-byte slice we XOR with
         let mut array = [0u8; ELEMENT_SIZE];
-        for i in 0..ELEMENT_SIZE {
-            array[i] = (i as u8).wrapping_mul(7).wrapping_add(3);
+        for (i, part) in array.iter_mut().enumerate() {
+            *part = (i as u8).wrapping_mul(7).wrapping_add(3);
         }
 
         // Compute expected result with scalar operations
@@ -403,24 +405,25 @@ mod tests {
         assert_eq!(LANES * 8, ELEMENT_SIZE);
     }
 
+    fn build_test_challenge() -> ChallengeId {
+        let mut bytes = [0u8; 64];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        ChallengeId {
+            bytes: bytes.to_vec(),
+        }
+    }
+
     #[test]
     fn compare_with_c_reference_output() {
-        use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
-
-        // ---- Input identical to the C program ----
-
-        let mut challenge_bytes = [0u8; 64];
-        for i in 0..64 {
-            challenge_bytes[i] = i as u8;
-        }
-
-        let challenge_id = ChallengeId {
-            bytes: challenge_bytes.into(),
+        let config = Config {
+            chunk_count: 2,
+            chunk_size: 8,
+            ..Config::default()
         };
 
-        let mut config = Config::default();
-        config.chunk_count = 2;
-        config.chunk_size = 8;
+        let challenge_id = build_test_challenge();
 
         let mut memory = Memory::new(config);
 
@@ -455,37 +458,28 @@ mod tests {
             ),
         ];
 
-        // ---- Compare ----
-
-        for i in 0..8 {
+        for (i, &expected) in EXPECTED.iter().enumerate() {
             let rust_el = memory.get(i).unwrap();
             let rust_bytes = rust_el.data.to_le_bytes().to_array();
 
             assert_eq!(
-                rust_bytes, EXPECTED[i],
+                rust_bytes, expected,
                 "Mismatch at element {}:\nRust: {:02x?}\nC:    {:02x?}",
-                i, rust_bytes, EXPECTED[i]
+                i, rust_bytes, expected
             );
         }
     }
 
     #[test]
     fn test_trace_element_reproducibility() {
-        use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
-
-        // --- Setup ---
-        let mut challenge_bytes = [0u8; 64];
-        for i in 0..64 {
-            challenge_bytes[i] = i as u8;
-        }
-        let challenge_id = ChallengeId {
-            bytes: challenge_bytes.into(),
+        let config = Config {
+            chunk_count: 2,
+            chunk_size: 8,
+            antecedent_count: 4,
+            ..Config::default()
         };
 
-        let mut config = Config::default();
-        config.chunk_count = 2;
-        config.chunk_size = 8;
-        config.antecedent_count = 4;
+        let challenge_id = build_test_challenge();
 
         let mut memory = Memory::new(config);
         memory.build_all_chunks(&challenge_id);

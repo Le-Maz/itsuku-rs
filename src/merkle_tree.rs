@@ -173,7 +173,11 @@ impl MerkleTree {
             return;
         }
 
-        let sibling_index = if index % 2 == 0 { index - 1 } else { index + 1 };
+        let sibling_index = if index.is_multiple_of(2) {
+            index - 1
+        } else {
+            index + 1
+        };
         if let Some(node) = self.get_node(sibling_index) {
             nodes.insert(sibling_index, Bytes::copy_from_slice(node));
         }
@@ -194,8 +198,8 @@ mod tests {
 
     fn build_test_challenge() -> ChallengeId {
         let mut bytes = [0u8; 64];
-        for i in 0..64 {
-            bytes[i] = i as u8;
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = i as u8;
         }
         ChallengeId {
             bytes: bytes.to_vec(),
@@ -205,9 +209,11 @@ mod tests {
     #[test]
     fn rust_merkle_root_matches_c() {
         // 1) Create config matching C test
-        let mut config = Config::default();
-        config.chunk_count = 2;
-        config.chunk_size = 8;
+        let config = Config {
+            chunk_count: 2,
+            chunk_size: 8,
+            ..Config::default()
+        };
 
         let challenge_id = build_test_challenge();
 
