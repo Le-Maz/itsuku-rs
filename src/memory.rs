@@ -21,6 +21,16 @@ pub struct Element {
     pub data: Simd<u64, LANES>,
 }
 
+impl From<[u8; 64]> for Element {
+    #[inline]
+    fn from(value: [u8; 64]) -> Self {
+        let simd_bytes = Simd::from_array(value);
+        Self {
+            data: Simd::from_le_bytes(simd_bytes),
+        }
+    }
+}
+
 impl Element {
     #[inline]
     const fn zero() -> Self {
@@ -68,12 +78,14 @@ impl Memory {
         Self { config, chunks }
     }
 
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&Element> {
         let chunk = index / self.config.chunk_size;
         let element = index % self.config.chunk_size;
         self.chunks.get(chunk)?.get(element)
     }
 
+    #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Element> {
         let chunk = index / self.config.chunk_size;
         let element = index % self.config.chunk_size;

@@ -4,6 +4,7 @@ pub mod challenge_id;
 pub mod config;
 pub mod memory;
 pub mod merkle_tree;
+pub mod proof;
 
 // Helper: compute argon2 index from first 4 bytes of previous element
 fn calculate_argon2_index(seed_bytes: [u8; 4], original_index: usize) -> usize {
