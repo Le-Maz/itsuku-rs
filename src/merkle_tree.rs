@@ -66,17 +66,46 @@ impl MerkleTree {
 
     pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory) {
         let element_count = self.config.chunk_count * self.config.chunk_size;
+        let threads = num_cpus::get();
+        let fragments_per_thread = self.fragments.len().div_ceil(threads);
 
-        for element_index in 0..element_count {
-            let mut hasher = Blake2bVar::new(self.node_size).unwrap();
-            let element = memory.get(element_index).unwrap();
-            hasher.update(&element.data.to_le_bytes().to_array());
-            hasher.update(challenge_id.bytes.as_slice());
+        let node_size = self.node_size;
 
-            let node_index = element_index + element_count - 1;
-            let node = self.get_node_mut(node_index).unwrap();
-            hasher.finalize_variable(node).unwrap();
-        }
+        std::thread::scope(|scope| {
+            for (thread, fragment_group) in
+                self.fragments.chunks_mut(fragments_per_thread).enumerate()
+            {
+                scope.spawn(move || {
+                    // Range of leaf nodes assigned to this fragment group
+                    let start_fragment = thread * fragments_per_thread;
+                    let mut global_node_index = start_fragment * NODES_PER_FRAGMENT;
+
+                    for fragment in fragment_group {
+                        for chunk in fragment.chunks_mut(node_size) {
+                            // Skip nodes outside the leaf range
+                            if global_node_index < element_count - 1 {
+                                global_node_index += 1;
+                                continue;
+                            }
+                            if global_node_index >= 2 * element_count - 1 {
+                                return; // past last leaf
+                            }
+
+                            let element_index = global_node_index - (element_count - 1);
+                            let element = memory.get(element_index).unwrap();
+
+                            let mut hasher = Blake2bVar::new(node_size).unwrap();
+                            hasher.update(&element.data.to_le_bytes().to_array());
+                            hasher.update(&challenge_id.bytes);
+
+                            hasher.finalize_variable(chunk).unwrap();
+
+                            global_node_index += 1;
+                        }
+                    }
+                });
+            }
+        });
     }
 
     pub fn compute_intermediate_nodes(&mut self, challenge_id: &ChallengeId) {
