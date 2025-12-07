@@ -33,20 +33,7 @@ enum Commands {
     },
 
     /// Verify a proof (reads JSON proof from stdin)
-    Verify {
-        #[arg(long, default_value_t = 1 << 10)]
-        chunk_count: usize,
-        #[arg(long, default_value_t = 1 << 15)]
-        chunk_size: usize,
-        #[arg(long, default_value_t = 24)]
-        difficulty_bits: usize,
-        #[arg(long, default_value_t = 4)]
-        antecedent_count: usize,
-        #[arg(long, default_value_t = 9)]
-        search_length: usize,
-        #[arg(long)]
-        challenge_id: String,
-    },
+    Verify,
 }
 
 // -------------------------------
@@ -87,21 +74,7 @@ fn main() {
             search_length,
             challenge_id,
         ),
-        Commands::Verify {
-            chunk_count,
-            chunk_size,
-            difficulty_bits,
-            antecedent_count,
-            search_length,
-            challenge_id,
-        } => run_verify(
-            chunk_count,
-            chunk_size,
-            difficulty_bits,
-            antecedent_count,
-            search_length,
-            challenge_id,
-        ),
+        Commands::Verify => run_verify(),
     }
 }
 
@@ -157,35 +130,7 @@ fn run_search(
     serde_json::to_writer(stdout(), &proof).expect("Failed to serialize proof");
 }
 
-fn run_verify(
-    chunk_count: usize,
-    chunk_size: usize,
-    difficulty_bits: usize,
-    antecedent_count: usize,
-    search_length: usize,
-    challenge_id_b64: String,
-) {
-    let config = Config {
-        chunk_count,
-        chunk_size,
-        difficulty_bits,
-        antecedent_count,
-        search_length,
-    };
-    let challenge_id = build_challenge_from_b64(&challenge_id_b64);
-
-    eprintln!("VERIFY.CONFIG.START");
-    eprintln!(
-        "challenge_id={}",
-        BASE64_URL_SAFE.encode(&challenge_id.bytes)
-    );
-    eprintln!("chunk_count={}", config.chunk_count);
-    eprintln!("chunk_size={}", config.chunk_size);
-    eprintln!("difficulty_bits={}", config.difficulty_bits);
-    eprintln!("antecedent_count={}", config.antecedent_count);
-    eprintln!("search_length={}", config.search_length);
-    eprintln!("VERIFY.CONFIG.END");
-
+fn run_verify() {
     eprintln!("VERIFY.INPUT.START");
     let proof: Proof = serde_json::from_reader(stdin()).unwrap_or_else(|err| {
         eprintln!("VERIFY.INPUT.ERROR");
@@ -195,7 +140,7 @@ fn run_verify(
     eprintln!("VERIFY.INPUT.END");
 
     eprintln!("VERIFY.EXEC.START");
-    let result = proof.verify(&config, &challenge_id);
+    let result = proof.verify();
     eprintln!("VERIFY.EXEC.END");
 
     match result {

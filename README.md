@@ -34,14 +34,14 @@ This project uses the experimental `portable_simd` feature. You **must** use a *
 ```bash
 rustup install nightly
 rustup default nightly
-```
+````
 
 ## 📦 Installation & Building
 
 Clone the repository and build using Cargo:
 
 ```bash
-git clone https://github.com/Le-Maz/itsuku-rs.git
+git clone [https://github.com/Le-Maz/itsuku-rs.git](https://github.com/Le-Maz/itsuku-rs.git)
 cd itsuku-rs
 cargo build --release
 ```
@@ -54,7 +54,7 @@ The application provides two main subcommands: `search` and `verify`.
 
 ### 1\. Search
 
-The `search` command generates the memory array, builds the Merkle tree, and iterates over nonces to find a solution that satisfies the difficulty.
+The `search` command generates the memory array, builds the Merkle tree, and iterates over nonces to find a solution that satisfies the difficulty. The resulting proof is self-contained, embedding both the configuration and the challenge ID.
 
 ```bash
 # Basic usage with default parameters
@@ -72,20 +72,15 @@ The command outputs status logs to `stderr` and the final JSON Proof to `stdout`
 
 ### 2\. Verification
 
-The `verify` command accepts a JSON proof from `stdin` and checks its validity without requiring the full memory generation (Light Client Verification).
+The `verify` command accepts a JSON proof from `stdin`. Because the `Proof` structure includes the configuration parameters and the challenge ID, **no flags are required** for verification.
 
 ```bash
 # 1. Search for a proof and save it
 ./target/release/itsuku search --difficulty-bits 16 > proof.json
 
-# 2. Extract the challenge_id from the logs or the proof file
-# (Note: You must pass the SAME challenge_id and config parameters used during search)
-CHALLENGE_ID="<insert_base64_challenge_id_here>"
-
-# 3. Verify
-cat proof.json | ./target/release/itsuku verify \
-  --difficulty-bits 16 \
-  --challenge-id $CHALLENGE_ID
+# 2. Verify
+# The verifier reads the config and challenge directly from the proof file
+cat proof.json | ./target/release/itsuku verify
 ```
 
 ## ⚙️ Configuration Parameters
@@ -97,11 +92,11 @@ cat proof.json | ./target/release/itsuku verify \
 | `--difficulty-bits`  | 24      | Number of leading zero bits required in the final hash ($d$).        |
 | `--antecedent-count` | 4       | Number of previous elements required to compute a new element ($n$). |
 | `--search-length`    | 9       | Length of the hash chain search ($L$).                               |
-| `--challenge-id`     | Random  | Base64 encoded challenge (Seed).                             |
+| `--challenge-id`     | Random  | Base64 encoded challenge (Seed).                                      |
 
 **Memory Calculation:**
 Total Memory = `chunk_count` \* `chunk_size` \* 64 bytes.
-_Default:_ 1024 \* 32768 \* 64 = 2 GiB.
+*Default:* 1024 \* 32768 \* 64 = 2 GiB.
 
 ## ⚠️ Disclaimer
 

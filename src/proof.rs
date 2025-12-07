@@ -25,6 +25,10 @@ use crate::{
 /// size is typically small (around 11 KiB for Itsuku's preferred parameters, Section 4).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Proof {
+    /// Configuration of the algorithm's parameters
+    config: Config,
+    /// Challenge identifier (I)
+    challenge_id: ChallengeId,
     /// The nonce (N) that satisfied the difficulty (d) requirement.
     nonce: u64,
     /// A map from leaf index to the list of `Element`s required to compute
@@ -266,6 +270,8 @@ impl Proof {
             }
 
             let proof = Proof {
+                config: params.config,
+                challenge_id: params.challenge_id.clone(),
                 nonce,
                 leaf_antecedents,
                 tree_opening,
@@ -295,11 +301,9 @@ impl Proof {
     ///
     /// ## Returns
     /// `Ok(())` if the proof is valid, or a `VerificationError` otherwise.
-    pub fn verify(
-        &self,
-        config: &Config,
-        challenge_id: &ChallengeId,
-    ) -> Result<(), VerificationError> {
+    pub fn verify(&self) -> Result<(), VerificationError> {
+        let config = &self.config;
+        let challenge_id = &self.challenge_id;
         let node_size = MerkleTree::calculate_node_size(config);
         let memory_size = config.chunk_count * config.chunk_size;
 
@@ -579,9 +583,6 @@ mod tests {
         let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
 
         // 5) Verify the proof
-        assert!(
-            proof.verify(&config, &challenge_id).is_ok(),
-            "Proof failed verification"
-        );
+        assert!(proof.verify().is_ok(), "Proof failed verification");
     }
 }
