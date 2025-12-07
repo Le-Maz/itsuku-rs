@@ -8,6 +8,7 @@ use std::{
 use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use blake2::{Blake2b512, Digest};
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     challenge_id::ChallengeId,
@@ -22,7 +23,7 @@ use crate::{
 /// required to reconstruct the memory elements for the path, and the
 /// Merkle tree opening (hashes) needed to verify the selected leaves. The proof
 /// size is typically small (around 11 KiB for Itsuku's preferred parameters, Section 4).
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Proof {
     /// The nonce (N) that satisfied the difficulty (d) requirement.
     nonce: u64,

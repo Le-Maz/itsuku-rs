@@ -1,6 +1,8 @@
 use std::{
+    fmt::Display,
     ops::{AddAssign, BitXorAssign},
     simd::{Simd, ToBytes},
+    str::FromStr,
 };
 
 use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
@@ -9,6 +11,7 @@ use blake2::{
     digest::{Update, VariableOutput},
 };
 use bytemuck::checked::cast_slice_mut;
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::{
     calculate_argon2_index, calculate_phi_variant_index, challenge_id::ChallengeId, config::Config,
@@ -17,9 +20,45 @@ use crate::{
 const ELEMENT_SIZE: usize = 64;
 const LANES: usize = ELEMENT_SIZE / 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub struct Element {
     pub data: Simd<u64, LANES>,
+}
+
+impl Display for Element {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes: [u8; ELEMENT_SIZE] = self.data.to_le_bytes().to_array();
+        for byte in &bytes {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for Element {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != ELEMENT_SIZE * 2 {
+            return Err(format!(
+                "Invalid length: expected {} hex characters, got {}",
+                ELEMENT_SIZE * 2,
+                s.len()
+            ));
+        }
+
+        let mut bytes = [0u8; ELEMENT_SIZE];
+        for i in 0..ELEMENT_SIZE {
+            let byte_str = &s[i * 2..i * 2 + 2];
+            bytes[i] =
+                u8::from_str_radix(byte_str, 16).map_err(|e| format!("Invalid hex: {}", e))?;
+        }
+
+        let simd_u8 = Simd::from_array(bytes);
+        let simd_u64 = Simd::from_le_bytes(simd_u8);
+
+        Ok(Self { data: simd_u64 })
+    }
 }
 
 impl From<[u8; 64]> for Element {
