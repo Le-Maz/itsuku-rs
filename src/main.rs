@@ -65,12 +65,6 @@ fn build_challenge_from_b64(b64_str: &str) -> ChallengeId {
     let decoded = BASE64_URL_SAFE
         .decode(b64_str)
         .expect("Invalid b64 string for --challenge-id");
-    if decoded.len() != 64 {
-        panic!(
-            "--challenge-id must be exactly 64 bytes (128 b64 chars), got {} bytes",
-            decoded.len()
-        );
-    }
     ChallengeId { bytes: decoded }
 }
 
