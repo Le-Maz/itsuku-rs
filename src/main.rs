@@ -3,6 +3,7 @@ use itsuku::{
     challenge_id::ChallengeId, config::Config, memory::Memory, merkle_tree::MerkleTree,
     proof::Proof,
 };
+use rand::{RngCore, rngs::ThreadRng};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -34,37 +35,47 @@ enum Commands {
         /// Search path length
         #[arg(long, default_value_t = 9)]
         search_length: usize,
+
+        /// Optional hex-encoded 64-byte challenge ID
+        #[arg(long)]
+        challenge_id: Option<String>,
     },
+
     /// Verify a proof (future use)
     Verify,
 }
 
-fn build_test_challenge() -> ChallengeId {
+// -------------------------------
+// Challenge ID helpers
+// -------------------------------
+
+fn build_random_challenge() -> ChallengeId {
     let mut bytes = [0u8; 64];
+    let mut rng = ThreadRng::default();
     for i in 0..64 {
-        bytes[i] = i as u8;
+        bytes[i] = rng.next_u32() as u8;
     }
     ChallengeId {
         bytes: bytes.to_vec(),
     }
 }
 
+fn build_challenge_from_hex(hex_str: &str) -> ChallengeId {
+    let decoded = hex::decode(hex_str).expect("Invalid hex string for --challenge-id");
+
+    assert!(
+        decoded.len() == 64,
+        "--challenge-id must be exactly 64 bytes (128 hex chars)"
+    );
+
+    ChallengeId { bytes: decoded }
+}
+
+// -------------------------------
+// main()
+// -------------------------------
 fn main() {
     let cli = Cli::parse();
-
-    // Config setup
-    let mut config = Config::default();
-    config.chunk_count = 16;
-    config.chunk_size = 128;
-    config.difficulty_bits = 16;
-
-    let challenge_id = build_test_challenge();
-    let mut memory = Memory::new(config);
-    memory.build_all_chunks(&challenge_id);
-
-    let mut merkle_tree = MerkleTree::new(config);
-    merkle_tree.compute_leaf_hashes(&challenge_id, &memory);
-    merkle_tree.compute_intermediate_nodes(&challenge_id);
 
     match cli.command {
         Commands::Search {
@@ -73,7 +84,9 @@ fn main() {
             difficulty_bits,
             antecedent_count,
             search_length,
+            challenge_id,
         } => {
+            // Build config from CLI
             let mut config = Config::default();
             config.chunk_count = chunk_count;
             config.chunk_size = chunk_size;
@@ -81,18 +94,28 @@ fn main() {
             config.antecedent_count = antecedent_count;
             config.search_length = search_length;
 
-            let challenge_id = build_test_challenge();
+            // Build challenge: either provided or random
+            let challenge_id = match challenge_id {
+                Some(hex_str) => build_challenge_from_hex(&hex_str),
+                None => build_random_challenge(),
+            };
 
+            println!("Challenge ID: {}", hex::encode(&challenge_id.bytes));
+
+            // Build memory
             let mut memory = Memory::new(config);
             memory.build_all_chunks(&challenge_id);
 
+            // Build Merkle tree
             let mut merkle_tree = MerkleTree::new(config);
             merkle_tree.compute_leaf_hashes(&challenge_id, &memory);
             merkle_tree.compute_intermediate_nodes(&challenge_id);
 
+            // Run proof search
             let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
             println!("Found proof: {:?}", proof);
         }
+
         Commands::Verify => todo!(),
     }
 }
