@@ -1,6 +1,6 @@
 # Itsuku PoW
 
-A memory-hard Proof-of-Work (PoW) scheme implementation in Rust, based on the **Itsuku** algorithm. Itsuku is an improvement over the MTP-Argon2 scheme, designed to be resistant to ASIC/FPGA implementations by requiring significant memory bandwidth and latency.
+A memory-hard Proof-of-Work (PoW) scheme implementation in Rust, based on the **Itsuku** algorithm. Itsuku is an improvement over the MTP-Argon2 scheme, designed to be resistant to ASIC/FPGA implementations by requiring significant memory bandwidth.
 
 This implementation leverages Rust's **SIMD** capabilities (via `portable_simd`) and multi-threading to maximize solver performance on CPUs.
 
