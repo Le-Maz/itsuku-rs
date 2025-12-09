@@ -11,7 +11,7 @@ This project implements the scheme described in:
 > **Itsuku: a Memory-Hardened Proof-of-Work Scheme**  
 > _Fabien Coelho, Arnaud Larroche, and Baptiste Colin (MINES ParisTech, PSL Research University, 2017)_
 
-Source: https://eprint.iacr.org/2017/1168.pdf
+Source: [https://eprint.iacr.org/2017/1168.pdf]
 
 Key improvements over MTP-Argon2 implemented here include:
 
@@ -34,7 +34,7 @@ This project uses the experimental `portable_simd` feature. You **must** use a *
 ```bash
 rustup install nightly
 rustup default nightly
-````
+```
 
 ## 📦 Installation & Building
 
@@ -92,11 +92,11 @@ cat proof.json | ./target/release/itsuku verify
 | `--difficulty-bits`  | 24      | Number of leading zero bits required in the final hash ($d$).        |
 | `--antecedent-count` | 4       | Number of previous elements required to compute a new element ($n$). |
 | `--search-length`    | 9       | Length of the hash chain search ($L$).                               |
-| `--challenge-id`     | Random  | Base64 encoded challenge (Seed).                                      |
+| `--challenge-id`     | Random  | Base64 encoded challenge (Seed).                                     |
 
 **Memory Calculation:**
 Total Memory = `chunk_count` \* `chunk_size` \* 64 bytes.
-*Default:* 1024 \* 32768 \* 64 = 2 GiB.
+_Default:_ 1024 \* 32768 \* 64 = 2 GiB.
 
 ## ⚠️ Disclaimer
 
