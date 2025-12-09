@@ -15,18 +15,24 @@ use serde::{Deserialize, Serialize};
 /// These values collectively determine the total memory size, the computational cost of
 /// reconstructing memory elements, and the required effort for finding a valid proof.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Args)]
+#[serde(default)]
 pub struct Config {
     /// The size of a single memory chunk (in elements which are 64 bytes each)
     ///
     /// See [`crate::memory::Element`]
+    #[arg(long, default_value_t = 1 << 15)]
     pub chunk_size: usize,
     /// The total number of memory chunks used for the proof
+    #[arg(long, default_value_t = 1 << 10)]
     pub chunk_count: usize,
     /// The number of antecedent elements required to compute a single compressed memory element
+    #[arg(long, default_value_t = 4)]
     pub antecedent_count: usize,
     /// The required number of leading zeros in the Omega hash
+    #[arg(long, default_value_t = 24)]
     pub difficulty_bits: usize,
     /// The number of tree paths used for a single proof
+    #[arg(long, default_value_t = 9)]
     pub search_length: usize,
 }
 
