@@ -11,7 +11,7 @@ This project implements the scheme described in:
 > **Itsuku: a Memory-Hardened Proof-of-Work Scheme**  
 > _Fabien Coelho, Arnaud Larroche, and Baptiste Colin (MINES ParisTech, PSL Research University, 2017)_
 
-Source: [https://eprint.iacr.org/2017/1168.pdf]
+Source: <https://eprint.iacr.org/2017/1168.pdf>
 
 Key improvements over MTP-Argon2 implemented here include:
 
