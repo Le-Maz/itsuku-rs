@@ -33,6 +33,7 @@ pub struct Proof {
     nonce: u64,
     /// A map from leaf index to the list of `Element`s required to compute
     /// the leaf's memory value (its antecedents).
+    /// stored as NativeEndian to simplify serialization, transmuted during verify/search.
     leaf_antecedents: BTreeMap<usize, Vec<Element<NativeEndian>>>,
     /// A map from Merkle node index to its hash, providing the collective opening
     /// (Z) (Merkle tree proof) of the selected leaves and their antecedents.
@@ -75,11 +76,11 @@ impl Proof {
     ///
     /// ## Returns
     /// The first valid `Proof` found.
-    pub fn search(
+    pub fn search<E: Endian>(
         config: Config,
         challenge_id: &ChallengeId,
-        memory: &Memory<NativeEndian>,
-        merkle_tree: &MerkleTree<NativeEndian>,
+        memory: &Memory<E>,
+        merkle_tree: &MerkleTree<E>,
     ) -> Self {
         let root_hash = merkle_tree.get_node(0).unwrap().to_vec();
 
@@ -108,7 +109,7 @@ impl Proof {
                     memory,
                     merkle_tree,
                     root_hash,
-                    _marker: PhantomData::<NativeEndian>,
+                    _marker: PhantomData::<E>,
                 };
 
                 scope.spawn(move || Self::search_worker(params, start, end, proof_slot));
@@ -200,8 +201,8 @@ impl Proof {
     }
 
     /// The worker function executed by each thread to search a range of nonces.
-    fn search_worker(
-        params: SearchParams<NativeEndian, Memory<NativeEndian>, MerkleTree<NativeEndian>>,
+    fn search_worker<E: Endian>(
+        params: SearchParams<E, Memory<E>, MerkleTree<E>>,
         start: u64,
         end: u64,
         proof_slot: &OnceLock<Proof>,
@@ -218,7 +219,7 @@ impl Proof {
                 return;
             }
 
-            let omega = Self::calculate_omega::<NativeEndian>(
+            let omega = Self::calculate_omega::<E>(
                 &params,
                 &mut hasher,
                 &mut selected_leaves,
@@ -240,7 +241,15 @@ impl Proof {
             for &leaf_index in &selected_leaves {
                 let node_index = memory_size - 1 + leaf_index;
                 // Collect one-level antecedents of the needed array elements
-                leaf_antecedents.insert(leaf_index, params.memory.trace_element(leaf_index));
+                let antecedents = params.memory.trace_element(leaf_index);
+                // Convert to NativeEndian for storage (Element data layout is identical)
+                // This unsafe cast is valid because Element is repr(transparent) over Simd<u64>
+                // and PhantomData is zero-sized.
+                let stored_antecedents = unsafe {
+                    std::mem::transmute::<Vec<Element<E>>, Vec<Element<NativeEndian>>>(antecedents)
+                };
+                leaf_antecedents.insert(leaf_index, stored_antecedents);
+
                 // Collect all Merkle tree nodes needed for the opening path
                 params.merkle_tree.trace_node(node_index, &mut tree_opening);
             }
@@ -251,7 +260,7 @@ impl Proof {
                 nonce,
                 leaf_antecedents,
                 tree_opening,
-                endianness: EndiannessTag::default(),
+                endianness: E::kind(),
             };
 
             // Attempt to set the proof. Only the first successful call will succeed.

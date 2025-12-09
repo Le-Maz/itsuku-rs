@@ -1,8 +1,8 @@
 use base64::{Engine, prelude::BASE64_URL_SAFE};
 use clap::{Parser, Subcommand};
 use itsuku::{
-    challenge_id::ChallengeId, config::Config, memory::Memory, merkle_tree::MerkleTree,
-    proof::Proof,
+    challenge_id::ChallengeId, config::Config, endianness::NativeEndian, memory::Memory,
+    merkle_tree::MerkleTree, proof::Proof,
 };
 use rand::{RngCore, rngs::ThreadRng};
 use std::io::{stdin, stdout};
@@ -112,12 +112,12 @@ fn run_search(
     eprintln!("SEARCH.CONFIG.END");
 
     eprintln!("SEARCH.MEMORY.BUILD.START");
-    let mut memory = Memory::new(config);
+    let mut memory = Memory::<NativeEndian>::new(config);
     memory.build_all_chunks(&challenge_id);
     eprintln!("SEARCH.MEMORY.BUILD.END");
 
     eprintln!("SEARCH.MERKLE.START");
-    let mut merkle_tree = MerkleTree::new(config);
+    let mut merkle_tree = MerkleTree::<NativeEndian>::new(config);
     merkle_tree.compute_leaf_hashes(&challenge_id, &memory);
     merkle_tree.compute_intermediate_nodes(&challenge_id);
     eprintln!("SEARCH.MERKLE.END");

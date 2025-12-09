@@ -3,6 +3,7 @@ use std::simd::{Simd, ToBytes};
 use serde::{Deserialize, Serialize};
 
 pub trait Endian: Send + Sync + 'static {
+    fn kind() -> EndiannessTag;
     fn u64_from_bytes(bytes: &[u8; 8]) -> u64;
     fn u64_to_bytes(x: u64) -> [u8; 8];
     fn simd_from_bytes(bytes: Simd<u8, 64>) -> Simd<u64, 8>;
@@ -51,6 +52,11 @@ impl Endian for NativeEndian {
     fn simd_to_bytes(x: Simd<u64, 8>) -> Simd<u8, 64> {
         x.to_ne_bytes()
     }
+
+    #[inline]
+    fn kind() -> EndiannessTag {
+        EndiannessTag::default()
+    }
 }
 
 impl Endian for LittleEndian {
@@ -73,6 +79,11 @@ impl Endian for LittleEndian {
     fn simd_to_bytes(x: Simd<u64, 8>) -> Simd<u8, 64> {
         x.to_le_bytes()
     }
+
+    #[inline]
+    fn kind() -> EndiannessTag {
+        EndiannessTag::Little
+    }
 }
 
 impl Endian for BigEndian {
@@ -94,5 +105,10 @@ impl Endian for BigEndian {
     #[inline]
     fn simd_to_bytes(x: Simd<u64, 8>) -> Simd<u8, 64> {
         x.to_be_bytes()
+    }
+
+    #[inline]
+    fn kind() -> EndiannessTag {
+        EndiannessTag::Big
     }
 }
