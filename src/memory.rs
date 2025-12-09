@@ -1,3 +1,9 @@
+//! This module defines the memory structure and operations for the Itsuku Proof-of-Work.
+//!
+//! It handles the allocation of the large memory array, the definition of individual
+//! 64-byte `Element`s using SIMD for performance, and the core "compression" function
+//! used to populate the memory and generate proofs.
+
 use std::{
     fmt::{Debug, Display},
     marker::PhantomData,
@@ -19,13 +25,22 @@ use crate::{
     endianness::Endian,
 };
 
+/// The size of a single memory element in bytes (64 bytes / 512 bits).
 const ELEMENT_SIZE: usize = 64;
+/// The number of 64-bit lanes in a SIMD vector (8 lanes).
 const LANES: usize = ELEMENT_SIZE / 8;
 
+/// A single unit of data within the Proof-of-Work memory.
+///
+/// Each `Element` consists of 64 bytes of data, represented internally as a SIMD vector
+/// of `u64` integers. This allows for efficient parallel arithmetic operations (XOR, ADD)
+/// required by the mixing function.
 #[derive(SerializeDisplay, DeserializeFromStr)]
 #[repr(transparent)]
 pub struct Element<E: Endian> {
+    /// The underlying SIMD data.
     pub data: Simd<u64, LANES>,
+    /// Marker to handle the generic Endian type without consuming space.
     _marker: PhantomData<E>,
 }
 
@@ -55,6 +70,7 @@ impl<E: Endian> PartialEq for Element<E> {
 impl<E: Endian> Eq for Element<E> {}
 
 impl<E: Endian> Display for Element<E> {
+    /// Formats the element as a lowercase hex string representing its little-endian byte sequence.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let bytes: [u8; ELEMENT_SIZE] = self.data.to_le_bytes().to_array();
         for byte in &bytes {
@@ -67,6 +83,7 @@ impl<E: Endian> Display for Element<E> {
 impl<E: Endian> FromStr for Element<E> {
     type Err = String;
 
+    /// Parses an Element from a hex string.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != ELEMENT_SIZE * 2 {
             return Err(format!(
@@ -105,6 +122,7 @@ impl<E: Endian> From<[u8; ELEMENT_SIZE]> for Element<E> {
 }
 
 impl<E: Endian> Element<E> {
+    /// Returns a new Element with all bits set to zero.
     #[inline]
     const fn zero() -> Self {
         Self {
@@ -113,7 +131,9 @@ impl<E: Endian> Element<E> {
         }
     }
 
-    /// Convert Element → base64 of its 64-byte little-endian encoding.
+    /// Convert Element to a URL-safe Base64 string of its 64-byte little-endian encoding.
+    ///
+    /// This is primarily used for compact serialization in proofs.
     pub fn to_base64(&self) -> String {
         let bytes: [u8; ELEMENT_SIZE] = self.data.to_le_bytes().to_array();
         BASE64_URL_SAFE_NO_PAD.encode(bytes)
@@ -121,6 +141,7 @@ impl<E: Endian> Element<E> {
 }
 
 impl<E: Endian> BitXorAssign<&Self> for Element<E> {
+    /// Performs a bitwise XOR assignment (`^=`) between two elements using SIMD.
     #[inline]
     fn bitxor_assign(&mut self, rhs: &Self) {
         self.data ^= rhs.data;
@@ -128,6 +149,9 @@ impl<E: Endian> BitXorAssign<&Self> for Element<E> {
 }
 
 impl<E: Endian> BitXorAssign<&[u8]> for Element<E> {
+    /// XORs this element with a byte slice.
+    ///
+    /// The slice is loaded into a SIMD vector, correcting for endianness before the operation.
     #[inline]
     fn bitxor_assign(&mut self, rhs: &[u8]) {
         let rhs_simd_u8 = Simd::load_or_default(rhs);
@@ -137,18 +161,29 @@ impl<E: Endian> BitXorAssign<&[u8]> for Element<E> {
 }
 
 impl<E: Endian> AddAssign<&Self> for Element<E> {
+    /// Performs a wrapping addition assignment (`+=`) between two elements using SIMD.
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
         self.data += rhs.data;
     }
 }
 
+/// The main memory structure for the PoW scheme.
+///
+/// It represents the directed acyclic graph (DAG) of data that must be computed and stored.
+/// The memory is divided into "chunks" to facilitate efficient parallel construction.
+///
+///
 pub struct Memory<E: Endian> {
     config: Config,
     chunks: Vec<Vec<Element<E>>>,
 }
 
 impl<E: Endian> Memory<E> {
+    /// Allocates the memory structure based on the provided configuration.
+    ///
+    /// Memory is initialized to zero and organized into `config.chunk_count` chunks,
+    /// each containing `config.chunk_size` elements.
     pub fn new(config: Config) -> Self {
         let mut chunks = Vec::with_capacity(config.chunk_count);
         for _ in 0..config.chunk_count {
@@ -158,6 +193,7 @@ impl<E: Endian> Memory<E> {
         Self { config, chunks }
     }
 
+    /// Retrieves a reference to the element at the specified global index.
     #[inline]
     pub fn get(&self, index: usize) -> Option<&Element<E>> {
         let chunk = index / self.config.chunk_size;
@@ -165,6 +201,7 @@ impl<E: Endian> Memory<E> {
         self.chunks.get(chunk)?.get(element)
     }
 
+    /// Retrieves a mutable reference to the element at the specified global index.
     #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Element<E>> {
         let chunk = index / self.config.chunk_size;
@@ -172,8 +209,13 @@ impl<E: Endian> Memory<E> {
         self.chunks.get_mut(chunk)?.get_mut(element)
     }
 
-    /// Calculates the antecedent indices for a given element index
-    /// and writes them directly into the provided mutable slice of usize.
+    /// Calculates the indices of antecedent elements required to compute a specific element.
+    ///
+    /// This implements the dependency graph logic. The indices are derived pseudo-randomly
+    /// based on the content of the *previous* element in the sequence, making the graph
+    /// data-dependent.
+    ///
+    /// The results are written directly into the provided `index_buffer` to avoid allocation.
     pub fn get_antecedent_indices(
         config: &Config,
         chunk: &[Element<E>],
@@ -188,13 +230,17 @@ impl<E: Endian> Memory<E> {
         let prev = &chunk[element_index - 1];
         let prev_bytes: [u8; ELEMENT_SIZE] = E::simd_to_bytes(prev.data).to_array();
 
+        // Use the first 4 bytes of the previous element as a seed
         let mut seed_4 = [0u8; 4];
         seed_4.copy_from_slice(&prev_bytes[0..4]);
+
+        // Calculate a base index using Argon2-like indexing logic
         let argon2_index = calculate_argon2_index(seed_4, element_index);
 
         let element_count = config.chunk_size;
 
         for (variant, index_slot) in index_buffer.iter_mut().enumerate() {
+            // Apply phi variant indexing to diversify dependencies
             let idx = calculate_phi_variant_index(element_index, argon2_index, variant);
             let idx_mod = idx % element_count;
 
@@ -202,8 +248,14 @@ impl<E: Endian> Memory<E> {
         }
     }
 
-    /// The core compression function, decoupled from memory access.
-    /// It computes a new Element given its antecedent Elements.
+    /// The core compression function (Phi).
+    ///
+    /// This function takes a set of antecedent elements and compresses them into a single
+    /// new element. The process involves:
+    /// 1. Summing even-indexed antecedents.
+    /// 2. Summing odd-indexed antecedents.
+    /// 3. Applying perturbations using the `global_element_index` and `challenge_id`.
+    /// 4. Hashing the result using Blake2b to produce the final element.
     pub fn compress(
         antecedents: &[Element<E>],
         global_element_index: u64,
@@ -216,7 +268,7 @@ impl<E: Endian> Memory<E> {
             sum_even += &antecedents[2 * k];
         }
 
-        // Apply XOR modification
+        // Apply XOR modification with global index
         let mut sum_even_mut = sum_even;
         let sum_even_array = sum_even_mut.data.as_mut_array();
         sum_even_array[0] ^= global_element_index;
@@ -228,11 +280,11 @@ impl<E: Endian> Memory<E> {
             sum_odd += &antecedents[2 * k + 1];
         }
 
-        // Apply XOR modification
+        // Apply XOR modification with challenge bytes
         let mut sum_odd_mut = sum_odd;
         sum_odd_mut ^= challenge_id.bytes.as_slice();
 
-        // 3. Variable-length Blake2b
+        // 3. Variable-length Blake2b Hash
         let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
         hasher.update(&E::simd_to_bytes(sum_even_mut.data).to_array());
         hasher.update(&E::simd_to_bytes(sum_odd_mut.data).to_array());
@@ -245,6 +297,13 @@ impl<E: Endian> Memory<E> {
         output
     }
 
+    /// Populates a single memory chunk.
+    ///
+    /// This process has two stages:
+    /// 1. **Initialization**: The first `antecedent_count` elements are generated directly
+    ///    from the chunk index and challenge ID via hashing.
+    /// 2. **Iterative Construction**: The remaining elements are generated by compressing
+    ///    antecedent elements found using `get_antecedent_indices`.
     pub fn build_chunk(
         config: &Config,
         chunk_index: usize,
@@ -287,6 +346,9 @@ impl<E: Endian> Memory<E> {
         }
     }
 
+    /// Builds the entire memory structure in parallel.
+    ///
+    /// Splits the work of building chunks across all available CPU threads.
     pub fn build_all_chunks(&mut self, challenge_id: &ChallengeId) {
         std::thread::scope(|scope| {
             let threads = num_cpus::get();
@@ -303,7 +365,13 @@ impl<E: Endian> Memory<E> {
         });
     }
 
-    /// Traces the element's antecedents
+    /// Traces and retrieves the antecedent elements for a given leaf index.
+    ///
+    /// This is used during proof generation to gather the data required for the verifier
+    /// to reconstruct a specific memory element.
+    ///
+    /// * If the element is a base element (start of a chunk), it returns just itself.
+    /// * Otherwise, it recalculates indices and returns the full list of parents.
     pub fn trace_element(&self, leaf_index: usize) -> Vec<Element<E>> {
         let antecedent_count = self.config.antecedent_count;
 
