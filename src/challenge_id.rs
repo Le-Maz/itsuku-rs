@@ -11,6 +11,7 @@ use serde_with::base64::Base64;
 /// calculates expensive memory structures once and uses them for multiple challenges.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChallengeId {
+    /// The raw bytes of the challenge identifier.
     #[serde(with = "::serde_with::As::<Base64>")]
     pub bytes: Vec<u8>,
 }

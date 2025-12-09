@@ -1,3 +1,18 @@
+//! This module defines the `Proof` structure and the core algorithms for searching and
+//! verifying solutions.
+//!
+//! The Itsuku Proof-of-Work (PoW) scheme requires finding a nonce N such that a
+//! computationally expensive hash chain called Omega produces a hash with a specific
+//! number of leading zeros. This demonstrates that the prover has spent significant
+//! memory and time resources.
+//!
+//! The module handles:
+//! * Search: Parallelized nonce search to find a valid nonce.
+//! * Construction: Building the compact proof object containing the nonce, Merkle
+//!   opening, and antecedents.
+//! * Verification: Reconstructing the partial memory and Merkle path to efficiently
+//!   validate the proof.
+
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{Display, Formatter},
@@ -17,34 +32,47 @@ use crate::{
     merkle_tree::MerkleTree,
 };
 
-/// A cryptographic **Proof-of-Work (PoW)** solution for the Itsuku scheme.
+/// A cryptographic Proof-of-Work (PoW) solution for the Itsuku scheme.
 ///
-/// A `Proof` consists of a successful nonce, a set of leaf antecedents
-/// required to reconstruct the memory elements for the path, and the
-/// Merkle tree opening (hashes) needed to verify the selected leaves. The proof
-/// size is typically small (around 11 KiB for Itsuku's preferred parameters, Section 4).
+/// A `Proof` consists of a successful nonce, a set of leaf antecedents needed to
+/// rebuild memory elements, and a Merkle tree opening containing the hashes that
+/// authenticate those elements. Proof size is small (around 11 KiB for the default
+/// parameters described in Section 4 of the specification).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Proof {
-    /// Configuration of the algorithm's parameters
+    /// Configuration of the algorithm's parameters used to generate this proof.
     config: Config,
-    /// Challenge identifier (I)
+    /// Challenge identifier (I) unique to this PoW instance.
     challenge_id: ChallengeId,
-    /// The nonce (N) that satisfied the difficulty (d) requirement.
+    /// The nonce (N) that satisfied the difficulty requirement.
     nonce: u64,
     /// A map from leaf index to the list of `Element`s required to compute
     /// the leaf's memory value (its antecedents).
-    /// stored as NativeEndian to simplify serialization, transmuted during verify/search.
+    ///
+    /// The keys are the indices of the leaves selected by the random walk.
+    /// The values are the antecedent elements. These are stored using `NativeEndian`
+    /// for serialization simplicity, but are transmuted to the correct endianness
+    /// during verification based on `endianness`.
     leaf_antecedents: BTreeMap<usize, Vec<Element<NativeEndian>>>,
-    /// A map from Merkle node index to its hash, providing the collective opening
-    /// (Z) (Merkle tree proof) of the selected leaves and their antecedents.
+    /// A map from Merkle node index to its hash.
+    ///
+    /// This provides the collective opening (Z) (Merkle tree proof) of the selected
+    /// leaves and their antecedents, allowing the verifier to authenticate the
+    /// memory values used in the proof without holding the entire dataset.
     tree_opening: BTreeMap<usize, Bytes>,
-    /// Endianness of the solver
+    /// Endianness of the solver (prover).
+    ///
+    /// This tag ensures that the verifier interprets the byte order of the proof
+    /// correctly, regardless of their own system's architecture.
     #[serde(default)]
     endianness: EndiannessTag,
 }
 
-/// Helper struct to pass immutable search parameters to workers, abstracting
-/// over the concrete implementations of memory and Merkle tree access.
+/// Helper struct to pass immutable search parameters to workers.
+///
+/// This abstracts over the concrete implementations of memory and Merkle tree access,
+/// allowing the core logic to work with both full datasets (during search) and partial/reconstructed
+/// datasets (during verification).
 #[derive(Clone, Copy)]
 struct SearchParams<
     'a,
@@ -61,12 +89,12 @@ struct SearchParams<
 }
 
 impl Proof {
-    /// Initiates a multi-threaded search for a valid proof that meets the difficulty requirement.
+    /// Initiates a multi-threaded nonce search for a valid proof that meets the difficulty requirement.
     ///
     /// The search iterates over nonces, calculating an Omega hash for each, until one
     /// satisfies the configured number of leading zero bits (d).
     /// The parallel implementation uses threading to allow available computing power to
-    /// contribute easily to mining, making the scheme more progress free (Section 3.7, 4).
+    /// contribute easily to the search.
     ///
     /// ## Arguments
     /// * `config`: The PoW configuration.
@@ -124,13 +152,19 @@ impl Proof {
     /// Calculates the final Omega hash for a given nonce based on the memory's structure
     /// and the challenge (I).
     ///
-    /// This function implements the core hash chain process (analogous to MTP-Argon2 steps 4, 5, and Itsuku steps 4, 5, 6).
-    /// The hash function H is made challenge-specific to thwart precomputation attacks like Dinur-Nadler (Section 3.4, 4).
+    /// This function implements the core hash chain process:
+    /// 1.  Init: Y0 = H(N || Phi || I)
+    /// 2.  Chain: For j = 1 .. L:
+    ///     * i_{j-1} = Y_{j-1} mod T (Select random leaf)
+    ///     * Yj = H(Y_{j-1} || (X[i_{j-1}] XOR I)) (Hash current path value with selected element)
+    /// 3.  Finalize: Combine path hashes to form Omega.
+    ///
+    /// The hash function H is made challenge-specific to thwart precomputation attacks like Dinur-Nadler.
     ///
     /// ## Arguments
     /// * `params`: Configuration and data access.
     /// * `hasher`: A mutable Blake2b512 hasher instance to reuse.
-    /// * `selected_leaves`: Output vector to store the indices of the memory elements accessed (I).
+    /// * `selected_leaves`: Output vector to store the indices of the memory elements accessed.
     /// * `path`: Output vector to store the intermediate hash chain values (Yj).
     /// * `memory_size`: The total number of elements in memory (T).
     /// * `nonce`: The nonce (N) to be included in the hash chain.
@@ -285,6 +319,10 @@ impl Proof {
 
     /// Verifies the PoW proof against the challenge (I) and configuration.
     ///
+    /// This method switches based on the proof's `endianness` tag to invoke the
+    /// correct verification logic (`verify_inner`), ensuring that proofs generated
+    /// on Big Endian systems can be verified on Little Endian systems and vice versa.
+    ///
     /// ## Returns
     /// `Ok(())` if the proof is valid, or a `VerificationError` otherwise.
     pub fn verify(&self) -> Result<(), VerificationError> {
@@ -294,11 +332,14 @@ impl Proof {
         }
     }
 
+    /// The generic verification logic parameterized by the solver's Endianness `E`.
     fn verify_inner<E: Endian>(&self) -> Result<(), VerificationError> {
         let config = &self.config;
         let challenge_id = &self.challenge_id;
         let node_size = MerkleTree::<E>::calculate_node_size(config);
         let memory_size = config.chunk_count * config.chunk_size;
+
+        // Transmute stored antecedents back to the specific Endian type E.
         let leaf_antecedents = unsafe {
             std::mem::transmute::<
                 &BTreeMap<usize, Vec<Element<NativeEndian>>>,
@@ -307,6 +348,7 @@ impl Proof {
         };
 
         // Step 1: Reconstruct required memory elements
+        // We only rebuild the parts of memory needed to verify the specific leaves touched by the proof path.
         let mut partial_memory = HashMap::new();
         for (index, antacedents) in leaf_antecedents.iter() {
             match antacedents.len() {
@@ -407,6 +449,7 @@ impl Proof {
         let mut path: Vec<[u8; 64]> = Vec::with_capacity(config.search_length + 1);
         let mut selected_leaves = Vec::with_capacity(config.search_length);
 
+        // Recalculate Omega using the partial data and the discovered root hash.
         let omega = Self::calculate_omega::<E>(
             &SearchParams {
                 config: *config,
@@ -424,7 +467,7 @@ impl Proof {
             self.nonce,
         );
 
-        // Check 3.1: Ensure the recalculated path (I) matches the leaves provided in the proof
+        // Check 3.1: Ensure the recalculated path matches the leaves provided in the proof
         // We check if *any* of the selected leaves is NOT present in the proven antecedents.
         if selected_leaves
             .iter()
@@ -443,18 +486,54 @@ impl Proof {
     }
 }
 
-/// Specific errors that can occur during Proof-of-Work verification.
+/// Specific errors that can occur during proof verification.
+///
+/// These errors cover all structural, cryptographic, and consistency
+/// failures that can arise when validating an Itsuku proof.
 #[derive(Debug)]
 pub enum VerificationError {
+    /// The number of antecedents supplied for a memory element is not valid
+    /// for the current configuration.
+    ///
+    /// *For example:*  
+    /// - A base-chunk element must have exactly 1 antecedent.  
+    /// - A compressed element must have exactly `antecedent_count` antecedents.
     InvalidAntecedentCount(usize),
+
+    /// A required Merkle opening for a leaf index referenced in the path
+    /// is missing from the proof.
     MissingOpeningForLeaf(usize),
+
+    /// The Merkle leaf hash computed from a reconstructed memory element does
+    /// not match the hash provided in the Merkle opening.
     LeafHashMismatch(usize),
+
+    /// A computed Merkle intermediate node hash does not match the hash
+    /// provided in the opening.
     IntermediateHashMismatch(usize),
+
+    /// The reconstructed Merkle tree does not contain the root node.  
+    /// This indicates an incomplete or malformed opening.
     MissingMerkleRoot,
+
+    /// The structure of the Merkle opening does not represent a valid path
+    /// from the required leaves to the root.
     MalformedProofPath,
+
+    /// During Omega recomputation, the verifier encountered a memory leaf that
+    /// was *not* included in the proof’s antecedent set.
     UnprovenLeafInPath,
+
+    /// The recomputed Omega hash does not satisfy the difficulty requirement
+    /// (insufficient leading zero bits).
     DifficultyNotMet,
+
+    /// A memory element needed to reconstruct part of the path is missing in
+    /// the antecedent set.
     RequiredElementMissing(usize),
+
+    /// A Merkle child node required to verify a parent hash is missing from the
+    /// opening.
     MissingChildNode(usize),
 }
 

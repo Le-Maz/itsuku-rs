@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![feature(portable_simd)]
+#![warn(missing_docs)]
 
 pub mod challenge_id;
 pub mod config;
