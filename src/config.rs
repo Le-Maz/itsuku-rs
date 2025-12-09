@@ -1,9 +1,10 @@
 //! This module defines the core **configuration parameters** for the Itsuku Proof-of-Work (PoW) scheme.
 //!
-//! The `Config` struct holds all system-wide constants that define the memory requirements,
+//! The `Config` struct holds all constants that define the memory requirements,
 //! the structure of the memory dependency graph, and the required cryptographic difficulty.
 //! These parameters ensure deterministic behavior across the prover (searcher) and the verifier.
 
+use clap::Args;
 use serde::{Deserialize, Serialize};
 
 /// # Configuration Parameters
@@ -13,9 +14,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// These values collectively determine the total memory size, the computational cost of
 /// reconstructing memory elements, and the required effort for finding a valid proof.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Args)]
 pub struct Config {
-    /// The size of a single memory chunk (in elements)
+    /// The size of a single memory chunk (in elements which are 64 bytes each)
+    ///
     /// See [`crate::memory::Element`]
     pub chunk_size: usize,
     /// The total number of memory chunks used for the proof

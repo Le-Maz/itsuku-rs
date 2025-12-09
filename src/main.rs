@@ -18,16 +18,8 @@ struct Cli {
 enum Commands {
     /// Search for a valid proof of work given the parameters
     Search {
-        #[arg(long, default_value_t = 1 << 10)]
-        chunk_count: usize,
-        #[arg(long, default_value_t = 1 << 15)]
-        chunk_size: usize,
-        #[arg(long, default_value_t = 24)]
-        difficulty_bits: usize,
-        #[arg(long, default_value_t = 4)]
-        antecedent_count: usize,
-        #[arg(long, default_value_t = 9)]
-        search_length: usize,
+        #[command(flatten)]
+        config: Config,
         #[arg(long)]
         challenge_id: Option<String>,
     },
@@ -60,40 +52,14 @@ fn main() {
 
     match cli.command {
         Commands::Search {
-            chunk_count,
-            chunk_size,
-            difficulty_bits,
-            antecedent_count,
-            search_length,
+            config,
             challenge_id,
-        } => run_search(
-            chunk_count,
-            chunk_size,
-            difficulty_bits,
-            antecedent_count,
-            search_length,
-            challenge_id,
-        ),
+        } => run_search(config, challenge_id),
         Commands::Verify => run_verify(),
     }
 }
 
-fn run_search(
-    chunk_count: usize,
-    chunk_size: usize,
-    difficulty_bits: usize,
-    antecedent_count: usize,
-    search_length: usize,
-    challenge_id_b64: Option<String>,
-) {
-    let config = Config {
-        chunk_count,
-        chunk_size,
-        difficulty_bits,
-        antecedent_count,
-        search_length,
-    };
-
+fn run_search(config: Config, challenge_id_b64: Option<String>) {
     let challenge_id = match challenge_id_b64 {
         Some(b64_str) => build_challenge_from_b64(&b64_str),
         None => build_random_challenge(),
