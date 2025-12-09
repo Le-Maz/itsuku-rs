@@ -1,4 +1,6 @@
 #![feature(portable_simd)]
+#[cfg(not(target_endian = "little"))]
+compile_error!("This library only supports little-endian systems");
 
 pub mod challenge_id;
 pub mod config;
