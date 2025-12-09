@@ -2,6 +2,12 @@
 name = "itsuku"
 version = "0.1.0"
 edition = "2024"
+authors = ["Lech Mazur <mazurlech@proton.me>"]
+description = "A Rust implementation of the Itsuku PoW algorithm."
+license = "MIT"
+repository = "https://github.com/Le-Maz/itsuku-rs"
+keywords = ["itsuku", "proof-of-work", "pow", "cryptography"]
+readme = "README.md"
 
 [dependencies]
 base64 = "0.22.1"
