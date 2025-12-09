@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::Range, simd::ToBytes};
+use std::{collections::BTreeMap, marker::PhantomData, ops::Range};
 
 use blake2::{
     Blake2bVar,
@@ -9,18 +9,20 @@ use bytes::Bytes;
 use crate::{
     challenge_id::ChallengeId,
     config::Config,
+    endianness::Endian,
     memory::{Element, Memory},
 };
 
 const MEMORY_COST_CX: f64 = 1.0;
 
-pub struct MerkleTree {
+pub struct MerkleTree<E: Endian> {
     config: Config,
     node_size: usize,
     nodes: Vec<u8>,
+    _marker: PhantomData<E>,
 }
 
-impl MerkleTree {
+impl<E: Endian> MerkleTree<E> {
     pub fn calculate_node_size(config: &Config) -> usize {
         let search_length = config.search_length as f64;
         let difficulty = config.difficulty_bits as f64;
@@ -42,6 +44,7 @@ impl MerkleTree {
             config,
             node_size,
             nodes,
+            _marker: PhantomData,
         }
     }
 
@@ -66,19 +69,19 @@ impl MerkleTree {
 
     pub fn compute_leaf_hash(
         challenge_id: &ChallengeId,
-        element: &Element,
+        element: &Element<E>,
         node_size: usize,
         output: &mut [u8],
     ) {
         let mut hasher = Blake2bVar::new(node_size).unwrap();
 
-        hasher.update(&element.data.to_le_bytes().to_array());
+        hasher.update(&E::simd_to_bytes(element.data).to_array());
         hasher.update(&challenge_id.bytes);
 
         hasher.finalize_variable(output).unwrap();
     }
 
-    pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory) {
+    pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory<E>) {
         let element_count = self.config.chunk_count * self.config.chunk_size;
         let node_size = self.node_size;
 
@@ -98,7 +101,7 @@ impl MerkleTree {
         left: &[u8],
         right: &[u8],
         node_size: usize,
-    ) -> impl FnOnce(&mut [u8]) + use<> {
+    ) -> impl FnOnce(&mut [u8]) + use<E> {
         let mut hasher = Blake2bVar::new(node_size).unwrap();
 
         hasher.update(left);
@@ -158,43 +161,4 @@ impl MerkleTree {
 }
 
 #[cfg(test)]
-mod tests {
-    use hex_literal::hex;
-
-    use super::*;
-    use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
-
-    const EXPECTED_ROOT_HASH: &[u8] = &hex!("681965c4ab");
-
-    fn build_test_challenge() -> ChallengeId {
-        let mut bytes = [0u8; 64];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = i as u8;
-        }
-        ChallengeId {
-            bytes: bytes.to_vec(),
-        }
-    }
-
-    #[test]
-    fn rust_merkle_root_matches_c() {
-        let config = Config {
-            chunk_count: 2,
-            chunk_size: 8,
-            ..Config::default()
-        };
-
-        let challenge_id = build_test_challenge();
-
-        let mut memory = Memory::new(config);
-        memory.build_all_chunks(&challenge_id);
-
-        let mut tree = MerkleTree::new(config);
-
-        tree.compute_leaf_hashes(&challenge_id, &memory);
-        tree.compute_intermediate_nodes(&challenge_id);
-
-        let root_hash = tree.get_node(0).unwrap();
-        assert_eq!(&root_hash[..5], EXPECTED_ROOT_HASH);
-    }
-}
+mod tests;

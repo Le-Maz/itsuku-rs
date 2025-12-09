@@ -1,12 +1,11 @@
 #![feature(portable_simd)]
-#[cfg(not(target_endian = "little"))]
-compile_error!("This library only supports little-endian systems");
 
 pub mod challenge_id;
 pub mod config;
 pub mod memory;
 pub mod merkle_tree;
 pub mod proof;
+pub mod endianness;
 
 // Helper: compute argon2 index from first 4 bytes of previous element
 fn calculate_argon2_index(seed_bytes: [u8; 4], original_index: usize) -> usize {

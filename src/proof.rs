@@ -1,11 +1,10 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{Display, Formatter},
-    simd::ToBytes,
+    marker::PhantomData,
     sync::OnceLock,
 };
 
-use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use blake2::{Blake2b512, Digest};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -13,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     challenge_id::ChallengeId,
     config::Config,
+    endianness::{BigEndian, Endian, EndiannessTag, LittleEndian, NativeEndian},
     memory::{Element, Memory},
     merkle_tree::MerkleTree,
 };
@@ -33,55 +33,30 @@ pub struct Proof {
     nonce: u64,
     /// A map from leaf index to the list of `Element`s required to compute
     /// the leaf's memory value (its antecedents).
-    leaf_antecedents: BTreeMap<usize, Vec<Element>>,
+    leaf_antecedents: BTreeMap<usize, Vec<Element<NativeEndian>>>,
     /// A map from Merkle node index to its hash, providing the collective opening
     /// (Z) (Merkle tree proof) of the selected leaves and their antecedents.
     tree_opening: BTreeMap<usize, Bytes>,
-}
-
-impl Display for Proof {
-    /// Formats the Proof into an S-expression-like string for human-readable
-    /// or simple serialization output.
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "(proof")?;
-
-        // nonce
-        writeln!(f, "  (nonce {})", self.nonce)?;
-
-        // leaf antecedents
-        writeln!(f, "  (leaf_antecedents")?;
-        for (leaf_idx, elems) in &self.leaf_antecedents {
-            // Write elements as Base64-encoded strings
-            write!(f, "    ({leaf_idx} (")?;
-            for elem in elems {
-                // Assuming Element has a to_base64 method
-                write!(f, "\"{}\" ", elem.to_base64())?;
-            }
-            writeln!(f, "))")?;
-        }
-        writeln!(f, "  )")?;
-
-        // tree opening
-        writeln!(f, "  (tree_opening")?;
-        for (node_idx, bytes) in &self.tree_opening {
-            let b64 = BASE64_URL_SAFE_NO_PAD.encode(bytes);
-            writeln!(f, "    ({node_idx} \"{b64}\")")?;
-        }
-        writeln!(f, "  )")?;
-
-        write!(f, ")")
-    }
+    /// Endianness of the solver
+    #[serde(default)]
+    endianness: EndiannessTag,
 }
 
 /// Helper struct to pass immutable search parameters to workers, abstracting
 /// over the concrete implementations of memory and Merkle tree access.
 #[derive(Clone, Copy)]
-struct SearchParams<'a, MemoryType: PartialMemory, MerkleTreeType: PartialMerkleTree> {
+struct SearchParams<
+    'a,
+    E: Endian,
+    MemoryType: PartialMemory<E>,
+    MerkleTreeType: PartialMerkleTree<E>,
+> {
     config: Config,
     challenge_id: &'a ChallengeId,
     memory: &'a MemoryType,
     merkle_tree: &'a MerkleTreeType,
     root_hash: &'a [u8],
+    _marker: PhantomData<E>,
 }
 
 impl Proof {
@@ -103,8 +78,8 @@ impl Proof {
     pub fn search(
         config: Config,
         challenge_id: &ChallengeId,
-        memory: &Memory,
-        merkle_tree: &MerkleTree,
+        memory: &Memory<NativeEndian>,
+        merkle_tree: &MerkleTree<NativeEndian>,
     ) -> Self {
         let root_hash = merkle_tree.get_node(0).unwrap().to_vec();
 
@@ -133,6 +108,7 @@ impl Proof {
                     memory,
                     merkle_tree,
                     root_hash,
+                    _marker: PhantomData::<NativeEndian>,
                 };
 
                 scope.spawn(move || Self::search_worker(params, start, end, proof_slot));
@@ -160,8 +136,8 @@ impl Proof {
     ///
     /// ## Returns
     /// The final Omega hash as a 64-byte array.
-    fn calculate_omega(
-        params: &SearchParams<'_, impl PartialMemory, impl PartialMerkleTree>,
+    fn calculate_omega<E: Endian>(
+        params: &SearchParams<'_, E, impl PartialMemory<E>, impl PartialMerkleTree<E>>,
         hasher: &mut Blake2b512,
         selected_leaves: &mut Vec<usize>,
         path: &mut Vec<[u8; 64]>,
@@ -173,7 +149,7 @@ impl Proof {
 
         // Step 4: Calculate the first path hash (Y0)
         // Y0 = HS(N || Phi || I)
-        hasher.update(nonce.to_le_bytes());
+        hasher.update(E::u64_to_bytes(nonce));
         hasher.update(params.root_hash);
         hasher.update(&params.challenge_id.bytes);
         path.push(hasher.finalize_reset().into());
@@ -184,7 +160,7 @@ impl Proof {
 
             // Determine the next memory element index: i_j-1 = Y_j-1 mod T
             let index =
-                (u64::from_le_bytes(*prev_hash.first_chunk().unwrap()) as usize) % memory_size;
+                (E::u64_from_bytes(prev_hash.first_chunk().unwrap()) as usize) % memory_size;
             selected_leaves.push(index);
 
             // Fetch the element, XOR it with the challenge_id for anti-precomputation
@@ -197,7 +173,7 @@ impl Proof {
 
             // Calculate the next path hash (Yj): Yj = HS(Y_j-1 || X_I[i_j-1] XOR I)
             hasher.update(prev_hash);
-            hasher.update(element.data.to_le_bytes());
+            hasher.update(E::simd_to_bytes(element.data));
             path.push(hasher.finalize_reset().into());
         }
 
@@ -214,9 +190,9 @@ impl Proof {
         // Element(0) - XOR of the initial path hash (h_0)
         {
             let first = path.first().unwrap();
-            let mut el = Element::from(*first);
-            el ^= params.challenge_id.bytes.as_slice();
-            hasher.update(el.data.to_le_bytes());
+            let mut element = Element::<E>::from(*first);
+            element ^= params.challenge_id.bytes.as_slice();
+            hasher.update(E::simd_to_bytes(element.data));
         }
 
         let omega: [u8; 64] = hasher.finalize_reset().into();
@@ -225,7 +201,7 @@ impl Proof {
 
     /// The worker function executed by each thread to search a range of nonces.
     fn search_worker(
-        params: SearchParams<Memory, MerkleTree>,
+        params: SearchParams<NativeEndian, Memory<NativeEndian>, MerkleTree<NativeEndian>>,
         start: u64,
         end: u64,
         proof_slot: &OnceLock<Proof>,
@@ -242,7 +218,7 @@ impl Proof {
                 return;
             }
 
-            let omega = Self::calculate_omega(
+            let omega = Self::calculate_omega::<NativeEndian>(
                 &params,
                 &mut hasher,
                 &mut selected_leaves,
@@ -275,6 +251,7 @@ impl Proof {
                 nonce,
                 leaf_antecedents,
                 tree_opening,
+                endianness: EndiannessTag::default(),
             };
 
             // Attempt to set the proof. Only the first successful call will succeed.
@@ -302,14 +279,27 @@ impl Proof {
     /// ## Returns
     /// `Ok(())` if the proof is valid, or a `VerificationError` otherwise.
     pub fn verify(&self) -> Result<(), VerificationError> {
+        match self.endianness {
+            EndiannessTag::Little => self.verify_inner::<LittleEndian>(),
+            EndiannessTag::Big => self.verify_inner::<BigEndian>(),
+        }
+    }
+
+    fn verify_inner<E: Endian>(&self) -> Result<(), VerificationError> {
         let config = &self.config;
         let challenge_id = &self.challenge_id;
-        let node_size = MerkleTree::calculate_node_size(config);
+        let node_size = MerkleTree::<E>::calculate_node_size(config);
         let memory_size = config.chunk_count * config.chunk_size;
+        let leaf_antecedents = unsafe {
+            std::mem::transmute::<
+                &BTreeMap<usize, Vec<Element<NativeEndian>>>,
+                &BTreeMap<usize, Vec<Element<E>>>,
+            >(&self.leaf_antecedents)
+        };
 
         // Step 1: Reconstruct required memory elements
         let mut partial_memory = HashMap::new();
-        for (index, antacedents) in self.leaf_antecedents.iter() {
+        for (index, antacedents) in leaf_antecedents.iter() {
             match antacedents.len() {
                 1 => {
                     // Base element (chunk 0) is provided directly
@@ -355,7 +345,7 @@ impl Proof {
                 continue; // Leaf already verified in step A
             }
 
-            let (left_index, right_index) = MerkleTree::children_of(node_index);
+            let (left_index, right_index) = MerkleTree::<E>::children_of(node_index);
 
             // Attempt to get children from verified/stored nodes OR from the opening itself
             let left_child = merkle_nodes
@@ -381,7 +371,7 @@ impl Proof {
             };
 
             // Compute intermediate hash: B[i]=H_M^I(B[2i+1]||B[2i+2])
-            let compute_hash = MerkleTree::compute_intermediate_hash(
+            let compute_hash = MerkleTree::<E>::compute_intermediate_hash(
                 challenge_id,
                 left_child,
                 right_child,
@@ -408,7 +398,7 @@ impl Proof {
         let mut path: Vec<[u8; 64]> = Vec::with_capacity(config.search_length + 1);
         let mut selected_leaves = Vec::with_capacity(config.search_length);
 
-        let omega = Self::calculate_omega(
+        let omega = Self::calculate_omega::<E>(
             &SearchParams {
                 config: *config,
                 challenge_id,
@@ -416,6 +406,7 @@ impl Proof {
                 memory: &partial_memory,
                 merkle_tree: &merkle_nodes,
                 root_hash: root_hash.as_ref(),
+                _marker: PhantomData::<E>,
             },
             &mut hasher,
             &mut selected_leaves,
@@ -499,40 +490,40 @@ impl Display for VerificationError {
 
 /// Trait representing memory access required for hash computation.
 /// Used to abstract between the full `Memory` (searcher) and the reconstructed partial memory (verifier).
-trait PartialMemory: Send + Sync {
+trait PartialMemory<E: Endian>: Send + Sync {
     /// Gets the element at the given index.
-    fn get_element(&self, index: usize) -> Option<Element>;
+    fn get_element(&self, index: usize) -> Option<Element<E>>;
 }
 
-impl PartialMemory for Memory {
+impl<E: Endian> PartialMemory<E> for Memory<E> {
     /// Accesses the full memory array X.
-    fn get_element(&self, index: usize) -> Option<Element> {
+    fn get_element(&self, index: usize) -> Option<Element<E>> {
         self.get(index).copied()
     }
 }
 
-impl PartialMemory for HashMap<usize, Element> {
+impl<E: Endian> PartialMemory<E> for HashMap<usize, Element<E>> {
     /// Accesses the partial memory reconstructed from antecedents during verification.
-    fn get_element(&self, index: usize) -> Option<Element> {
+    fn get_element(&self, index: usize) -> Option<Element<E>> {
         self.get(&index).copied()
     }
 }
 
 /// Trait representing Merkle node access required during verification.
 /// Used to abstract between the full `MerkleTree` (searcher) and the map of opened nodes (verifier).
-pub trait PartialMerkleTree: Send + Sync {
+pub trait PartialMerkleTree<E>: Send + Sync {
     /// Gets the Merkle node hash at the given index.
     fn get_node(&self, index: usize) -> Option<&[u8]>;
 }
 
-impl PartialMerkleTree for MerkleTree {
+impl<E: Endian> PartialMerkleTree<E> for MerkleTree<E> {
     /// Accesses the Merkle node in the full tree structure.
     fn get_node(&self, index: usize) -> Option<&[u8]> {
         self.get_node(index)
     }
 }
 
-impl PartialMerkleTree for HashMap<usize, Bytes> {
+impl<E: Endian> PartialMerkleTree<E> for HashMap<usize, Bytes> {
     /// Accesses the provided or reconstructed Merkle node in the opening.
     fn get_node(&self, index: usize) -> Option<&[u8]> {
         self.get(&index).map(|node| node.as_ref())
@@ -540,49 +531,4 @@ impl PartialMerkleTree for HashMap<usize, Bytes> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::{
-        challenge_id::ChallengeId, config::Config, memory::Memory, merkle_tree::MerkleTree,
-        proof::Proof,
-    };
-
-    fn build_test_challenge() -> ChallengeId {
-        let mut bytes = [0u8; 64];
-        for (i, byte) in bytes.iter_mut().enumerate() {
-            *byte = i as u8;
-        }
-        ChallengeId {
-            bytes: bytes.to_vec(),
-        }
-    }
-
-    #[test]
-    fn solves_and_verifies() {
-        // 1) Create config matching C test
-        let config = Config {
-            chunk_count: 16,
-            chunk_size: 64,
-            difficulty_bits: 8,
-            ..Config::default()
-        };
-
-        let challenge_id = build_test_challenge();
-
-        // 2) Build memory
-        let mut memory = Memory::new(config);
-        memory.build_all_chunks(&challenge_id);
-
-        // 3) Build Merkle tree
-        let mut merkle_tree = MerkleTree::new(config);
-
-        // Compute leaf hashes and intermediate nodes
-        merkle_tree.compute_leaf_hashes(&challenge_id, &memory);
-        merkle_tree.compute_intermediate_nodes(&challenge_id);
-
-        // 4) Search for the proof
-        let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
-
-        // 5) Verify the proof
-        assert!(proof.verify().is_ok(), "Proof failed verification");
-    }
-}
+mod tests;
