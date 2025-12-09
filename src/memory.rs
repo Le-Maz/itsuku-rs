@@ -5,6 +5,7 @@
 //! used to populate the memory and generate proofs.
 
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     marker::PhantomData,
     ops::{AddAssign, BitXorAssign},
@@ -390,6 +391,27 @@ impl<E: Endian> Memory<E> {
         let mut indices = vec![0; antecedent_count];
         Self::get_antecedent_indices(&self.config, chunk, element_index, &mut indices);
         indices.into_iter().map(|idx| chunk[idx]).collect()
+    }
+}
+
+/// Trait representing memory access required for hash computation.
+/// Used to abstract between the full `Memory` (searcher) and the reconstructed partial memory (verifier).
+pub trait PartialMemory<E: Endian>: Send + Sync {
+    /// Gets the element at the given index.
+    fn get_element(&self, index: usize) -> Option<Element<E>>;
+}
+
+impl<E: Endian> PartialMemory<E> for Memory<E> {
+    /// Accesses the full memory array X.
+    fn get_element(&self, index: usize) -> Option<Element<E>> {
+        self.get(index).copied()
+    }
+}
+
+impl<E: Endian> PartialMemory<E> for HashMap<usize, Element<E>> {
+    /// Accesses the partial memory reconstructed from antecedents during verification.
+    fn get_element(&self, index: usize) -> Option<Element<E>> {
+        self.get(&index).copied()
     }
 }
 

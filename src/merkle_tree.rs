@@ -7,7 +7,11 @@
 //! Unlike standard Merkle trees, the node size here is dynamic, calculated based on
 //! security parameters to ensure a specific cost for time-memory trade-off attacks.
 
-use std::{collections::BTreeMap, marker::PhantomData, ops::Range};
+use std::{
+    collections::{BTreeMap, HashMap},
+    marker::PhantomData,
+    ops::Range,
+};
 
 use blake2::{
     Blake2bVar,
@@ -202,6 +206,27 @@ impl<E: Endian> MerkleTree<E> {
 
         let parent_index = (index - 1) / 2;
         Self::trace_node(self, parent_index, nodes);
+    }
+}
+
+/// Trait representing Merkle node access required during verification.
+/// Used to abstract between the full `MerkleTree` (searcher) and the map of opened nodes (verifier).
+pub trait PartialMerkleTree<E>: Send + Sync {
+    /// Gets the Merkle node hash at the given index.
+    fn get_node(&self, index: usize) -> Option<&[u8]>;
+}
+
+impl<E: Endian> PartialMerkleTree<E> for MerkleTree<E> {
+    /// Accesses the Merkle node in the full tree structure.
+    fn get_node(&self, index: usize) -> Option<&[u8]> {
+        self.get_node(index)
+    }
+}
+
+impl<E: Endian> PartialMerkleTree<E> for HashMap<usize, Bytes> {
+    /// Accesses the provided or reconstructed Merkle node in the opening.
+    fn get_node(&self, index: usize) -> Option<&[u8]> {
+        self.get(&index).map(|node| node.as_ref())
     }
 }
 

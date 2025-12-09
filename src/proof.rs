@@ -15,7 +15,6 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt::{Display, Formatter},
     marker::PhantomData,
     sync::OnceLock,
 };
@@ -28,9 +27,12 @@ use crate::{
     challenge_id::ChallengeId,
     config::Config,
     endianness::{BigEndian, Endian, EndiannessTag, LittleEndian, NativeEndian},
-    memory::{Element, Memory},
-    merkle_tree::MerkleTree,
+    memory::{Element, Memory, PartialMemory},
+    merkle_tree::{MerkleTree, PartialMerkleTree},
+    proof::error::VerificationError,
 };
+
+pub mod error;
 
 /// A cryptographic Proof-of-Work (PoW) solution for the Itsuku scheme.
 ///
@@ -483,138 +485,6 @@ impl Proof {
 
         // If all checks pass, the proof is valid.
         Ok(())
-    }
-}
-
-/// Specific errors that can occur during proof verification.
-///
-/// These errors cover all structural, cryptographic, and consistency
-/// failures that can arise when validating an Itsuku proof.
-#[derive(Debug)]
-pub enum VerificationError {
-    /// The number of antecedents supplied for a memory element is not valid
-    /// for the current configuration.
-    ///
-    /// *For example:*  
-    /// - A base-chunk element must have exactly 1 antecedent.  
-    /// - A compressed element must have exactly `antecedent_count` antecedents.
-    InvalidAntecedentCount(usize),
-
-    /// A required Merkle opening for a leaf index referenced in the path
-    /// is missing from the proof.
-    MissingOpeningForLeaf(usize),
-
-    /// The Merkle leaf hash computed from a reconstructed memory element does
-    /// not match the hash provided in the Merkle opening.
-    LeafHashMismatch(usize),
-
-    /// A computed Merkle intermediate node hash does not match the hash
-    /// provided in the opening.
-    IntermediateHashMismatch(usize),
-
-    /// The reconstructed Merkle tree does not contain the root node.  
-    /// This indicates an incomplete or malformed opening.
-    MissingMerkleRoot,
-
-    /// The structure of the Merkle opening does not represent a valid path
-    /// from the required leaves to the root.
-    MalformedProofPath,
-
-    /// During Omega recomputation, the verifier encountered a memory leaf that
-    /// was *not* included in the proof’s antecedent set.
-    UnprovenLeafInPath,
-
-    /// The recomputed Omega hash does not satisfy the difficulty requirement
-    /// (insufficient leading zero bits).
-    DifficultyNotMet,
-
-    /// A memory element needed to reconstruct part of the path is missing in
-    /// the antecedent set.
-    RequiredElementMissing(usize),
-
-    /// A Merkle child node required to verify a parent hash is missing from the
-    /// opening.
-    MissingChildNode(usize),
-}
-
-impl Display for VerificationError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VerificationError::InvalidAntecedentCount(count) => {
-                write!(f, "Invalid antecedent count: {}", count)
-            }
-            VerificationError::MissingOpeningForLeaf(idx) => {
-                write!(f, "Missing Merkle opening for required leaf index: {}", idx)
-            }
-            VerificationError::LeafHashMismatch(idx) => {
-                write!(f, "Computed leaf hash mismatch for index: {}", idx)
-            }
-            VerificationError::IntermediateHashMismatch(idx) => {
-                write!(f, "Computed intermediate hash mismatch for index: {}", idx)
-            }
-            VerificationError::MissingMerkleRoot => write!(f, "Missing Merkle Root hash (Phi)"),
-            VerificationError::MalformedProofPath => write!(
-                f,
-                "The Merkle path structure in the proof opening is malformed"
-            ),
-            VerificationError::UnprovenLeafInPath => write!(
-                f,
-                "Recalculated path includes leaves not provided in the proof"
-            ),
-            VerificationError::DifficultyNotMet => {
-                write!(f, "Proof difficulty not met (insufficient leading zeros)")
-            }
-            VerificationError::RequiredElementMissing(idx) => {
-                write!(f, "Required memory element missing at index: {}", idx)
-            }
-            VerificationError::MissingChildNode(idx) => write!(
-                f,
-                "Missing child node required to verify parent hash at index: {}",
-                idx
-            ),
-        }
-    }
-}
-
-/// Trait representing memory access required for hash computation.
-/// Used to abstract between the full `Memory` (searcher) and the reconstructed partial memory (verifier).
-trait PartialMemory<E: Endian>: Send + Sync {
-    /// Gets the element at the given index.
-    fn get_element(&self, index: usize) -> Option<Element<E>>;
-}
-
-impl<E: Endian> PartialMemory<E> for Memory<E> {
-    /// Accesses the full memory array X.
-    fn get_element(&self, index: usize) -> Option<Element<E>> {
-        self.get(index).copied()
-    }
-}
-
-impl<E: Endian> PartialMemory<E> for HashMap<usize, Element<E>> {
-    /// Accesses the partial memory reconstructed from antecedents during verification.
-    fn get_element(&self, index: usize) -> Option<Element<E>> {
-        self.get(&index).copied()
-    }
-}
-
-/// Trait representing Merkle node access required during verification.
-/// Used to abstract between the full `MerkleTree` (searcher) and the map of opened nodes (verifier).
-pub trait PartialMerkleTree<E>: Send + Sync {
-    /// Gets the Merkle node hash at the given index.
-    fn get_node(&self, index: usize) -> Option<&[u8]>;
-}
-
-impl<E: Endian> PartialMerkleTree<E> for MerkleTree<E> {
-    /// Accesses the Merkle node in the full tree structure.
-    fn get_node(&self, index: usize) -> Option<&[u8]> {
-        self.get_node(index)
-    }
-}
-
-impl<E: Endian> PartialMerkleTree<E> for HashMap<usize, Bytes> {
-    /// Accesses the provided or reconstructed Merkle node in the opening.
-    fn get_node(&self, index: usize) -> Option<&[u8]> {
-        self.get(&index).map(|node| node.as_ref())
     }
 }
 
