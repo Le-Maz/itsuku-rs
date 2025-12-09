@@ -14,10 +14,7 @@ use std::{
 };
 
 use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
-use blake2::{
-    Blake2bVar,
-    digest::{Update, VariableOutput},
-};
+use blake3::Hasher;
 use bytemuck::checked::cast_slice_mut;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 
@@ -286,14 +283,14 @@ impl<E: Endian> Memory<E> {
         sum_odd_mut ^= challenge_id.bytes.as_slice();
 
         // 3. Variable-length Blake2b Hash
-        let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
+        let mut hasher = Hasher::new();
         hasher.update(&E::simd_to_bytes(sum_even_mut.data).to_array());
         hasher.update(&E::simd_to_bytes(sum_odd_mut.data).to_array());
 
         let mut output = Element::zero();
         let output_bytes = output.data.as_mut_array();
         let output_slice = cast_slice_mut(output_bytes);
-        hasher.finalize_variable(output_slice).unwrap();
+        hasher.finalize_xof().fill(output_slice);
 
         output
     }
@@ -313,12 +310,12 @@ impl<E: Endian> Memory<E> {
     ) {
         // Initialize first n elements (allocation-free)
         for (element_index, element) in chunk.iter_mut().enumerate() {
-            let mut hasher = Blake2bVar::new(ELEMENT_SIZE).unwrap();
+            let mut hasher = Hasher::new();
             hasher.update(&E::u64_to_bytes(element_index as u64));
             hasher.update(&E::u64_to_bytes(chunk_index as u64));
             hasher.update(&challenge_id.bytes);
             let output = element.data.as_mut_array().as_mut_slice();
-            hasher.finalize_variable(cast_slice_mut(output)).unwrap();
+            hasher.finalize_xof().fill(cast_slice_mut(output));
         }
 
         // Allocate the reusable index buffer once for the whole chunk

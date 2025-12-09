@@ -11,6 +11,7 @@ pub mod proof;
 
 /// Computes argon2 index from a given seed and original index.
 /// RFC 9106, Section 3.4.2
+#[inline]
 fn calculate_argon2_index(seed_bytes: [u8; 4], original_index: usize) -> usize {
     let seed_integer_value: u64 = u32::from_le_bytes(seed_bytes) as u64;
 
@@ -22,6 +23,7 @@ fn calculate_argon2_index(seed_bytes: [u8; 4], original_index: usize) -> usize {
 
 /// Computes the phi variant index based on the original index, argon2 index,
 /// and the variant identifier.
+#[inline]
 fn calculate_phi_variant_index(
     original_index: usize,
     argon2_index: usize,

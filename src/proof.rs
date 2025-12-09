@@ -19,7 +19,7 @@ use std::{
     sync::OnceLock,
 };
 
-use blake2::{Blake2b512, Digest};
+use blake3::Hasher;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -175,21 +175,25 @@ impl Proof {
     /// The final Omega hash as a 64-byte array.
     fn calculate_omega<E: Endian>(
         params: &SearchParams<'_, E, impl PartialMemory<E>, impl PartialMerkleTree<E>>,
-        hasher: &mut Blake2b512,
+        hasher: &mut Hasher,
         selected_leaves: &mut Vec<usize>,
         path: &mut Vec<[u8; 64]>,
         memory_size: usize,
         nonce: u64,
     ) -> [u8; 64] {
+        let mut hash_output = [0; 64];
+
         selected_leaves.clear();
         path.clear();
 
         // Step 4: Calculate the first path hash (Y0)
         // Y0 = HS(N || Phi || I)
-        hasher.update(E::u64_to_bytes(nonce));
+        hasher.update(&E::u64_to_bytes(nonce));
         hasher.update(params.root_hash);
         hasher.update(&params.challenge_id.bytes);
-        path.push(hasher.finalize_reset().into());
+        hasher.finalize_xof().fill(&mut hash_output);
+        path.push(hash_output);
+        hasher.reset();
 
         // Step 5: Iterative hash chain (1 <= j <= L)
         for _ in 1..=params.config.search_length {
@@ -210,8 +214,11 @@ impl Proof {
 
             // Calculate the next path hash (Yj): Yj = HS(Y_j-1 || X_I[i_j-1] XOR I)
             hasher.update(prev_hash);
-            hasher.update(E::simd_to_bytes(element.data));
-            path.push(hasher.finalize_reset().into());
+            hasher.update(E::simd_to_bytes(element.data).as_array());
+
+            hasher.finalize_xof().fill(&mut hash_output);
+            path.push(hash_output);
+            hasher.reset();
         }
 
         // Step 6: Calculate Omega (Ω)
@@ -229,11 +236,12 @@ impl Proof {
             let first = path.first().unwrap();
             let mut element = Element::<E>::from(*first);
             element ^= params.challenge_id.bytes.as_slice();
-            hasher.update(E::simd_to_bytes(element.data));
+            hasher.update(&E::simd_to_bytes(element.data).to_array());
         }
 
-        let omega: [u8; 64] = hasher.finalize_reset().into();
-        omega
+        hasher.finalize_xof().fill(&mut hash_output);
+        hasher.reset();
+        hash_output
     }
 
     /// The worker function executed by each thread to search a range of nonces.
@@ -243,7 +251,7 @@ impl Proof {
         end: u64,
         proof_slot: &OnceLock<Proof>,
     ) {
-        let mut hasher = Blake2b512::new();
+        let mut hasher = Hasher::new();
         let mut selected_leaves = Vec::with_capacity(params.config.search_length);
         // Path length is L (search_length) + 1 (for Y0)
         let mut path: Vec<[u8; 64]> = Vec::with_capacity(params.config.search_length + 1);
@@ -379,7 +387,7 @@ impl Proof {
             let mut leaf_hash = vec![0u8; node_size];
 
             // Compute leaf hash: H_M^I(e)=H_M(e||I)
-            MerkleTree::compute_leaf_hash(challenge_id, element, node_size, &mut leaf_hash);
+            MerkleTree::compute_leaf_hash(challenge_id, element, &mut leaf_hash);
 
             // Check if the computed leaf hash matches the provided opening hash
             let Some(opened_hash) = self.tree_opening.get(&node_index) else {
@@ -424,12 +432,8 @@ impl Proof {
             };
 
             // Compute intermediate hash: B[i]=H_M^I(B[2i+1]||B[2i+2])
-            let compute_hash = MerkleTree::<E>::compute_intermediate_hash(
-                challenge_id,
-                left_child,
-                right_child,
-                node_size,
-            );
+            let compute_hash =
+                MerkleTree::<E>::compute_intermediate_hash(challenge_id, left_child, right_child);
             let mut computed_hash = vec![0u8; node_size];
             compute_hash(&mut computed_hash);
 
@@ -447,7 +451,7 @@ impl Proof {
         };
 
         // Step 3: Verify Omega hash
-        let mut hasher = Blake2b512::new();
+        let mut hasher = Hasher::new();
         let mut path: Vec<[u8; 64]> = Vec::with_capacity(config.search_length + 1);
         let mut selected_leaves = Vec::with_capacity(config.search_length);
 

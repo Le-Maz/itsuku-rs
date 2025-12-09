@@ -3,7 +3,7 @@ use hex_literal::hex;
 use super::*;
 use crate::{challenge_id::ChallengeId, config::Config, endianness::LittleEndian, memory::Memory};
 
-const EXPECTED_ROOT_HASH: &[u8] = &hex!("681965c4ab");
+const EXPECTED_ROOT_HASH: &[u8] = &hex!("bf8dbfafcc");
 
 fn build_test_challenge() -> ChallengeId {
     let mut bytes = [0u8; 64];
@@ -16,7 +16,7 @@ fn build_test_challenge() -> ChallengeId {
 }
 
 #[test]
-fn rust_merkle_root_matches_c() {
+fn merkle_root_matches_golden() {
     let config = Config {
         chunk_count: 2,
         chunk_size: 8,

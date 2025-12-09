@@ -13,10 +13,7 @@ use std::{
     ops::Range,
 };
 
-use blake2::{
-    Blake2bVar,
-    digest::{Update, VariableOutput},
-};
+use blake3::Hasher;
 use bytes::Bytes;
 
 use crate::{
@@ -98,18 +95,13 @@ impl<E: Endian> MerkleTree<E> {
     }
 
     /// Computes the hash for a leaf node (a memory element).
-    pub fn compute_leaf_hash(
-        challenge_id: &ChallengeId,
-        element: &Element<E>,
-        node_size: usize,
-        output: &mut [u8],
-    ) {
-        let mut hasher = Blake2bVar::new(node_size).unwrap();
+    pub fn compute_leaf_hash(challenge_id: &ChallengeId, element: &Element<E>, output: &mut [u8]) {
+        let mut hasher = Hasher::new();
 
         hasher.update(&E::simd_to_bytes(element.data).to_array());
         hasher.update(&challenge_id.bytes);
 
-        hasher.finalize_variable(output).unwrap();
+        hasher.finalize_xof().fill(output);
     }
 
     /// Populates all leaf nodes of the tree by hashing the elements of the Memory array.
@@ -117,7 +109,6 @@ impl<E: Endian> MerkleTree<E> {
     /// In the flat array representation, leaves are stored starting at index `total_elements - 1`.
     pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory<E>) {
         let element_count = self.config.chunk_count * self.config.chunk_size;
-        let node_size = self.node_size;
 
         // Leaves start at index element_count - 1
         let first_leaf = element_count - 1;
@@ -126,7 +117,7 @@ impl<E: Endian> MerkleTree<E> {
             let node_index = first_leaf + i;
             let element = memory.get(i).unwrap();
             let node = self.get_node_mut(node_index).unwrap();
-            Self::compute_leaf_hash(challenge_id, element, node_size, node);
+            Self::compute_leaf_hash(challenge_id, element, node);
         }
     }
 
@@ -138,15 +129,14 @@ impl<E: Endian> MerkleTree<E> {
         challenge_id: &ChallengeId,
         left: &[u8],
         right: &[u8],
-        node_size: usize,
     ) -> impl FnOnce(&mut [u8]) + use<E> {
-        let mut hasher = Blake2bVar::new(node_size).unwrap();
+        let mut hasher = Hasher::new();
 
         hasher.update(left);
         hasher.update(right);
         hasher.update(&challenge_id.bytes);
 
-        |output| hasher.finalize_variable(output).unwrap()
+        move |output| hasher.finalize_xof().fill(output)
     }
 
     /// Returns the indices of the left and right children for a given parent index.
@@ -170,12 +160,7 @@ impl<E: Endian> MerkleTree<E> {
             let left_node = self.get_node(left_index).unwrap();
             let right_node = self.get_node(right_index).unwrap();
 
-            let compute_hash = Self::compute_intermediate_hash(
-                challenge_id,
-                left_node,
-                right_node,
-                self.node_size,
-            );
+            let compute_hash = Self::compute_intermediate_hash(challenge_id, left_node, right_node);
 
             let parent_node = self.get_node_mut(parent_index).unwrap();
             compute_hash(parent_node);

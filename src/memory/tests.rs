@@ -121,7 +121,7 @@ fn build_test_challenge() -> ChallengeId {
 }
 
 #[test]
-fn compare_with_c_reference_output() {
+fn compare_with_goldens() {
     let config = Config {
         chunk_count: 2,
         chunk_size: 8,
@@ -134,32 +134,30 @@ fn compare_with_c_reference_output() {
 
     memory.build_all_chunks(&challenge_id);
 
-    // ---- Expected output from C reference ----
-
     const EXPECTED: [[u8; 64]; 8] = [
         hex!(
-            "3b1da82003c6c8749ed080b4ad02043638f158ca52e8f19b15bebfd15ecb92b436fcb9ceef092b5f6f8b722fecec6fe0ed5f7beb3ab855b42edbd306ddc7b297"
+            "bfaa820cbe6ba0089574cb3542d412b63bf2a67b18db2b1fec01e05d67e61a494a29b467e31f762bc0ed6d0563fdc7f24e5033619d92a2dc9dde37285146009a"
         ),
         hex!(
-            "cb87b2a8628b61bf35cb4b67faa7d03bc0272e2c3210b584014ee23ee2c48d9209bf7ec5383ae9ed419dab2e8317cfc966b46f49288d4f470ddf64955c4a1389"
+            "822680f5c9010d753a5d4f43eda2388c39de635ac16721c6995d2221166c2fc52b5fb644ee00f1e6e57ec49ff8f8f823aa4c3174ab159aa7620978abd915ca6f"
         ),
         hex!(
-            "7f3c7902197eda4bf7682cc2c3c7a2b3ef37936fd4ee8a6d36c089592c764703d23b62619f153449fbc5f2ca84eec38cee6ebf786fcbfccb3db22adb5254d5ed"
+            "b5839565fcddfa90e2427cbcd625027816a8e611c863451b27efc10bcfd5d89296e32753e6e6a134f74ce760b3513f0670177499fde4cbfc3b426b18f5adb288"
         ),
         hex!(
-            "0132ee4240bc64733517790a4406ed1b4a42698f40133ae2f9f65e4dac06605f81de400843b74498d3052af58649f6eaaa12a443954d0aefddef52c4764d53c7"
+            "7733af4af5a7031dc58cee6eeb3c838c1d1f06ae7c2722e5f8c4a423aa4ad720c260ee411a781617f2767d4000d57b98d790882195152c2e50f34d4dab7b8ceb"
         ),
         hex!(
-            "870d931c871173138163f54134c150876679e63a0c434075d3f474b669799a8b952426862531b5892063718b7b0445bb9ee671d45df6572e02410707e2675f41"
+            "93587dc15a1820e6a9062f897d9ace19548976af2eaf7bb33d90772d08d5091eeb104678626ec4e85f09a23f0e0d8ac5fc873b1f0884d0817265ac8ee7ff497f"
         ),
         hex!(
-            "97e2a1af68abf9658a6b731da7815f320cd363835fbbaab87129e3c699692d71dde4146571fe340ee978e9bffd12119cea847ed5999ca332d2ab43cd971d963d"
+            "ff69dd0d69d9f902d10e18b6502a58c3f7e56278cf8207c29b22eb0753efb3e08c4d19aa82817ffbc9edb6e58581b167135a4dcbbb702114725803dc4000bc20"
         ),
         hex!(
-            "2b6d8d0afcab11115d7ec82b020b7fac8421862b6412020aa67361f25cd305cf5e3610129d0ac6ab7d5cda519bc2eee80dd48d144bb59f91cae8b189c98828d0"
+            "ea0fa5b63f76f023c623c11316febe695ce9d2d8eee1d2135574a65b88713b5d269a63f2ea6bf2560b5f01b3e8109033ea6587dfb1d9be05a5056cb8a482e19b"
         ),
         hex!(
-            "6e3f7633fe74120bcbea86e34dfa49d6a939d06f29945175015e4b312ec41e47d2b12a9cf00ce5f80da94d029c42f79426723071b49a568338964d42e3aff578"
+            "db09868d506fb8d3d42fbf2fa1cc4749e4be5e6328af7afe58954f156cc54e83d1b5670ad0838472f5c5d107d730e0153c3fe2090e1d31760c5487422813540b"
         ),
     ];
 
@@ -169,7 +167,7 @@ fn compare_with_c_reference_output() {
 
         assert_eq!(
             rust_bytes, expected,
-            "Mismatch at element {}:\nRust: {:02x?}\nC:    {:02x?}",
+            "Mismatch at element {}:\nGot: {:02x?}\nExpected:    {:02x?}",
             i, rust_bytes, expected
         );
     }
