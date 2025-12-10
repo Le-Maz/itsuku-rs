@@ -1,3 +1,6 @@
+#[cfg(target_family = "wasm")]
+compile_error!("Cannot compile Itsuku CLI in WASM");
+
 use base64::{Engine, prelude::BASE64_URL_SAFE};
 use clap::{Parser, Subcommand};
 use itsuku::{

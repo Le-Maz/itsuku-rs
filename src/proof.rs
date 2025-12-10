@@ -25,6 +25,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    NUM_CPUS,
     challenge_id::ChallengeId,
     config::Config,
     endianness::{BigEndian, Endian, EndiannessTag, LittleEndian, NativeEndian},
@@ -76,7 +77,6 @@ pub struct Proof {
 /// This abstracts over the concrete implementations of memory and Merkle tree access,
 /// allowing the core logic to work with both full datasets (during search) and partial/reconstructed
 /// datasets (during verification).
-#[derive(Clone, Copy)]
 struct SearchParams<
     'a,
     E: Endian,
@@ -90,6 +90,27 @@ struct SearchParams<
     merkle_tree: &'a MerkleTreeType,
     root_hash: &'a [u8],
     _marker: PhantomData<E>,
+}
+
+impl<'a, E: Endian, MemoryType: PartialMemory<E>, MerkleTreeType: PartialMerkleTree<E>> Clone
+    for SearchParams<'a, E, MemoryType, MerkleTreeType>
+{
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config,
+            challenge_id: self.challenge_id,
+            challenge_element: self.challenge_element,
+            memory: self.memory,
+            merkle_tree: self.merkle_tree,
+            root_hash: self.root_hash,
+            _marker: self._marker,
+        }
+    }
+}
+
+impl<'a, E: Endian, MemoryType: PartialMemory<E>, MerkleTreeType: PartialMerkleTree<E>> Copy
+    for SearchParams<'a, E, MemoryType, MerkleTreeType>
+{
 }
 
 impl Proof {
@@ -119,10 +140,28 @@ impl Proof {
         // Used to safely store the first proof found by any thread.
         let proof_slot = OnceLock::new();
 
-        let threads = num_cpus::get().min(config.jobs);
+        let threads = NUM_CPUS.min(config.jobs);
         // Divide the full u64::MAX range into chunks for each thread.
         let chunk = u64::MAX / threads as u64;
         let challenge_element = challenge_id.bytes.into();
+        let root_hash = &root_hash;
+        let params = SearchParams {
+            config,
+            challenge_id,
+            challenge_element: &challenge_element,
+            memory,
+            merkle_tree,
+            root_hash,
+            _marker: PhantomData::<E>,
+        };
+
+        if threads <= 1 {
+            // --- Sequential Execution ---
+            Self::search_worker(params, 0, u64::MAX, &proof_slot);
+            return proof_slot
+                .into_inner()
+                .expect("Proof search failed to find a solution.");
+        }
 
         std::thread::scope(|scope| {
             for thread in 0..threads {
@@ -134,17 +173,7 @@ impl Proof {
                 };
 
                 // Create shared/borrowed references for the parameters
-                let root_hash = &root_hash;
                 let proof_slot = &proof_slot;
-                let params = SearchParams {
-                    config,
-                    challenge_id,
-                    challenge_element: &challenge_element,
-                    memory,
-                    merkle_tree,
-                    root_hash,
-                    _marker: PhantomData::<E>,
-                };
 
                 scope.spawn(move || Self::search_worker(params, start, end, proof_slot));
             }

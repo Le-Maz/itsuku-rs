@@ -19,8 +19,8 @@ use bytemuck::checked::cast_slice_mut;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::{
-    calculate_argon2_index, calculate_phi_variant_index, challenge_id::ChallengeId, config::Config,
-    endianness::Endian,
+    NUM_CPUS, calculate_argon2_index, calculate_phi_variant_index, challenge_id::ChallengeId,
+    config::Config, endianness::Endian,
 };
 
 /// The size of a single memory element in bytes (64 bytes / 512 bits).
@@ -334,27 +334,57 @@ impl<E: Endian> Memory<E> {
         }
     }
 
-    /// Builds the entire memory structure in parallel.
+    /// Builds a contiguous range of chunks within a single thread.
     ///
-    /// Splits the work of building chunks across all available CPU threads.
+    /// This helper encapsulates the chunk iteration logic used by both the
+    /// sequential and parallel execution paths.
+    fn build_chunk_range(
+        config: Config,
+        start_chunk_index: usize,
+        chunks_to_build: &mut [Vec<Element<E>>],
+        challenge_id: &ChallengeId,
+        challenge_element: &Element<E>,
+    ) {
+        for (local_index, chunk) in chunks_to_build.iter_mut().enumerate() {
+            let chunk_index = start_chunk_index + local_index;
+            Self::build_chunk(&config, chunk_index, chunk, challenge_id, challenge_element);
+        }
+    }
+
+    /// Builds the entire memory structure in parallel (or sequentially if NUM_CPUS <= 1).
     pub fn build_all_chunks(&mut self, challenge_id: &ChallengeId) {
+        let config = self.config;
+        let threads = NUM_CPUS.min(config.jobs);
+        let chunks_per_thread = config.chunk_count.div_ceil(threads);
+        let challenge_element = challenge_id.bytes.into();
+
+        if threads <= 1 {
+            // --- Sequential Execution ---
+            return Self::build_chunk_range(
+                config,
+                0, // Start from global index 0
+                &mut self.chunks,
+                challenge_id,
+                &challenge_element,
+            );
+        }
+
+        // --- Parallel Execution ---
         std::thread::scope(|scope| {
-            let config = self.config;
-            let threads = num_cpus::get().min(config.jobs);
-            let chunks_per_thread = config.chunk_count.div_ceil(threads);
-            let challenge_element = challenge_id.bytes.into();
-            for (thread, chunks_to_build) in self.chunks.chunks_mut(chunks_per_thread).enumerate() {
+            for (thread_index, chunks_to_build) in
+                self.chunks.chunks_mut(chunks_per_thread).enumerate()
+            {
+                // Calculate the global index where this thread's work starts
+                let start_chunk_index = thread_index * chunks_per_thread;
+
                 scope.spawn(move || {
-                    for (chunk_index, chunk) in chunks_to_build.iter_mut().enumerate() {
-                        let chunk_index = thread * chunks_per_thread + chunk_index;
-                        Self::build_chunk(
-                            &config,
-                            chunk_index,
-                            chunk,
-                            challenge_id,
-                            &challenge_element,
-                        );
-                    }
+                    Self::build_chunk_range(
+                        config,
+                        start_chunk_index,
+                        chunks_to_build,
+                        challenge_id,
+                        &challenge_element,
+                    );
                 });
             }
         });

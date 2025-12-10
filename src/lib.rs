@@ -2,12 +2,25 @@
 #![feature(portable_simd, likely_unlikely)]
 #![warn(missing_docs)]
 
+use std::sync::LazyLock;
+
 pub mod challenge_id;
 pub mod config;
 pub mod endianness;
 pub mod memory;
 pub mod merkle_tree;
 pub mod proof;
+
+static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        num_cpus::get()
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        1
+    }
+});
 
 /// Computes argon2 index from a given seed and original index.
 /// RFC 9106, Section 3.4.2

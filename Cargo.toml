@@ -9,6 +9,9 @@ repository = "https://github.com/Le-Maz/itsuku-rs"
 keywords = ["itsuku", "proof-of-work", "pow", "cryptography"]
 readme = "README.md"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [profile.bench]
 opt-level = 3
 lto = true
@@ -22,8 +25,10 @@ bytemuck = "1.24.0"
 bytes = { version = "1.11.0", features = ["serde"] }
 clap = { version = "4.5.53", features = ["derive"] }
 hex-literal = "1.1.0"
-num_cpus = "1.17.0"
-rand = "0.9.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_with = { version = "3.16.1", features = ["base64"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+num_cpus = "1.17.0"
+rand = "0.9.2"
