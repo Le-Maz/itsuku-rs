@@ -10,9 +10,7 @@ fn build_test_challenge() -> ChallengeId {
     for (i, b) in bytes.iter_mut().enumerate() {
         *b = i as u8;
     }
-    ChallengeId {
-        bytes: bytes.to_vec(),
-    }
+    ChallengeId { bytes }
 }
 
 #[test]

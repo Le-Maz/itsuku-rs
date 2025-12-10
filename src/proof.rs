@@ -84,6 +84,7 @@ struct SearchParams<
 > {
     config: Config,
     challenge_id: &'a ChallengeId,
+    challenge_element: &'a Element<E>,
     memory: &'a MemoryType,
     merkle_tree: &'a MerkleTreeType,
     root_hash: &'a [u8],
@@ -120,6 +121,7 @@ impl Proof {
         let threads = num_cpus::get();
         // Divide the full u64::MAX range into chunks for each thread.
         let chunk = u64::MAX / threads as u64;
+        let challenge_element = challenge_id.bytes.into();
 
         std::thread::scope(|scope| {
             for thread in 0..threads {
@@ -136,6 +138,7 @@ impl Proof {
                 let params = SearchParams {
                     config,
                     challenge_id,
+                    challenge_element: &challenge_element,
                     memory,
                     merkle_tree,
                     root_hash,
@@ -210,7 +213,7 @@ impl Proof {
                 .memory
                 .get_element(index)
                 .expect("Required element must exist");
-            element ^= params.challenge_id.bytes.as_slice();
+            element ^= params.challenge_element;
 
             // Calculate the next path hash (Yj): Yj = HS(Y_j-1 || X_I[i_j-1] XOR I)
             hasher.update(prev_hash);
@@ -235,7 +238,7 @@ impl Proof {
         {
             let first = path.first().unwrap();
             let mut element = Element::<E>::from(*first);
-            element ^= params.challenge_id.bytes.as_slice();
+            element ^= params.challenge_element;
             hasher.update(&E::simd_to_bytes(element.data).to_array());
         }
 
@@ -346,6 +349,7 @@ impl Proof {
     fn verify_inner<E: Endian>(&self) -> Result<(), VerificationError> {
         let config = &self.config;
         let challenge_id = &self.challenge_id;
+        let challenge_element = challenge_id.bytes.into();
         let node_size = MerkleTree::<E>::calculate_node_size(config);
         let memory_size = config.chunk_count * config.chunk_size;
 
@@ -368,7 +372,7 @@ impl Proof {
                 }
                 n if n == config.antecedent_count => {
                     // Compressed element (chunk > 0) is recomputed from its antecedents
-                    let element = Memory::compress(antacedents, *index as u64, challenge_id);
+                    let element = Memory::compress(antacedents, *index as u64, &challenge_element);
                     partial_memory.insert(*index, element);
                 }
                 n => {
@@ -460,6 +464,7 @@ impl Proof {
             &SearchParams {
                 config: *config,
                 challenge_id,
+                challenge_element: &challenge_id.bytes.into(),
                 // Use the reconstructed memory and verified Merkle nodes as partial data sources
                 memory: &partial_memory,
                 merkle_tree: &merkle_nodes,

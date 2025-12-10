@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// The size of a single memory element in bytes (64 bytes / 512 bits).
-const ELEMENT_SIZE: usize = 64;
+pub const ELEMENT_SIZE: usize = 64;
 /// The number of 64-bit lanes in a SIMD vector (8 lanes).
 const LANES: usize = ELEMENT_SIZE / 8;
 
@@ -146,18 +146,6 @@ impl<E: Endian> BitXorAssign<&Self> for Element<E> {
     }
 }
 
-impl<E: Endian> BitXorAssign<&[u8]> for Element<E> {
-    /// XORs this element with a byte slice.
-    ///
-    /// The slice is loaded into a SIMD vector, correcting for endianness before the operation.
-    #[inline]
-    fn bitxor_assign(&mut self, rhs: &[u8]) {
-        let rhs_simd_u8 = Simd::load_or_default(rhs);
-        let rhs_simd_u64 = E::simd_from_bytes(rhs_simd_u8);
-        self.data ^= rhs_simd_u64;
-    }
-}
-
 impl<E: Endian> AddAssign<&Self> for Element<E> {
     /// Performs a wrapping addition assignment (`+=`) between two elements using SIMD.
     #[inline]
@@ -257,7 +245,7 @@ impl<E: Endian> Memory<E> {
     pub fn compress(
         antecedents: &[Element<E>],
         global_element_index: u64,
-        challenge_id: &ChallengeId,
+        challenge_element: &Element<E>,
     ) -> Element<E> {
         // 1. Calculate Sum Even
         let mut sum_even = Element::zero();
@@ -280,7 +268,7 @@ impl<E: Endian> Memory<E> {
 
         // Apply XOR modification with challenge bytes
         let mut sum_odd_mut = sum_odd;
-        sum_odd_mut ^= challenge_id.bytes.as_slice();
+        sum_odd_mut ^= challenge_element;
 
         // 3. Variable-length Blake2b Hash
         let mut hasher = Hasher::new();
@@ -307,6 +295,7 @@ impl<E: Endian> Memory<E> {
         chunk_index: usize,
         chunk: &mut [Element<E>],
         challenge_id: &ChallengeId,
+        challenge_element: &Element<E>,
     ) {
         // Initialize first n elements (allocation-free)
         for (element_index, element) in chunk.iter_mut().enumerate() {
@@ -336,7 +325,8 @@ impl<E: Endian> Memory<E> {
             let global_element_index = (chunk_index as u64)
                 .wrapping_mul(config.chunk_size as u64)
                 .wrapping_add(element_index as u64);
-            let new_element = Self::compress(&antecedents, global_element_index, challenge_id);
+            let new_element =
+                Self::compress(&antecedents, global_element_index, &challenge_element);
             antecedents.clear();
 
             // Write the result back into the chunk
@@ -352,11 +342,18 @@ impl<E: Endian> Memory<E> {
             let threads = num_cpus::get();
             let chunks_per_thread = self.config.chunk_count.div_ceil(threads);
             let config = self.config;
+            let challenge_element = challenge_id.bytes.into();
             for (thread, chunks_to_build) in self.chunks.chunks_mut(chunks_per_thread).enumerate() {
                 scope.spawn(move || {
                     for (chunk_index, chunk) in chunks_to_build.iter_mut().enumerate() {
                         let chunk_index = thread * chunks_per_thread + chunk_index;
-                        Self::build_chunk(&config, chunk_index, chunk, challenge_id);
+                        Self::build_chunk(
+                            &config,
+                            chunk_index,
+                            chunk,
+                            challenge_id,
+                            &challenge_element,
+                        );
                     }
                 });
             }

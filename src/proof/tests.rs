@@ -12,9 +12,7 @@ fn build_test_challenge() -> ChallengeId {
     for (i, byte) in bytes.iter_mut().enumerate() {
         *byte = i as u8;
     }
-    ChallengeId {
-        bytes: bytes.to_vec(),
-    }
+    ChallengeId { bytes }
 }
 
 fn solves_and_verifies<E: Endian>() -> Proof {

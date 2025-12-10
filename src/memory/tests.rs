@@ -74,37 +74,6 @@ fn add_matches_scalar_add() {
 }
 
 #[test]
-fn xor_with_slice_matches_scalar() {
-    let mut el = Element::<LittleEndian>::zero();
-
-    // Fill the SIMD element with a known pattern
-    for (i, lane) in el.data.as_mut_array().iter_mut().enumerate() {
-        *lane = 0x0102030405060708u64.wrapping_mul(i as u64 + 1);
-    }
-
-    // Construct a 64-byte slice we XOR with
-    let mut array = [0u8; ELEMENT_SIZE];
-    for (i, part) in array.iter_mut().enumerate() {
-        *part = (i as u8).wrapping_mul(7).wrapping_add(3);
-    }
-
-    // Compute expected result with scalar operations
-    let mut expected = [0u64; LANES];
-    for lane in 0..LANES {
-        let mut word_bytes = [0u8; 8];
-        word_bytes.copy_from_slice(&array[lane * 8..lane * 8 + 8]);
-        let rhs_word = u64::from_le_bytes(word_bytes);
-        expected[lane] = el.data[lane] ^ rhs_word;
-    }
-
-    // Apply SIMD XOR
-    let mut simd_el = el;
-    simd_el ^= array.as_slice();
-
-    assert_eq!(simd_el.data.to_array(), expected);
-}
-
-#[test]
 fn lane_count_is_correct() {
     // Static sanity check: 64 bytes should produce exactly 8 lanes of u64
     assert_eq!(LANES * 8, ELEMENT_SIZE);
@@ -115,9 +84,7 @@ fn build_test_challenge() -> ChallengeId {
     for (i, byte) in bytes.iter_mut().enumerate() {
         *byte = i as u8;
     }
-    ChallengeId {
-        bytes: bytes.to_vec(),
-    }
+    ChallengeId { bytes }
 }
 
 #[test]
@@ -210,7 +177,9 @@ fn test_trace_element_reproducibility() {
         );
 
         // 2. Re-compute the element using the traced antecedents
-        let recomputed_element = Memory::compress(&antecedents, global_index as u64, &challenge_id);
+        let challenge_element = challenge_id.bytes.into();
+        let recomputed_element =
+            Memory::compress(&antecedents, global_index as u64, &challenge_element);
 
         // 3. Assert that the recomputed element matches the original element
         let original_element = memory.get(global_index).unwrap();

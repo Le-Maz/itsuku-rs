@@ -35,16 +35,16 @@ enum Commands {
 fn build_random_challenge() -> ChallengeId {
     let mut bytes = [0u8; 64];
     ThreadRng::default().fill_bytes(&mut bytes);
-    ChallengeId {
-        bytes: bytes.to_vec(),
-    }
+    ChallengeId { bytes }
 }
 
 fn build_challenge_from_b64(b64_str: &str) -> ChallengeId {
     let decoded = BASE64_URL_SAFE
         .decode(b64_str)
         .expect("Invalid b64 string for --challenge-id");
-    ChallengeId { bytes: decoded }
+    ChallengeId {
+        bytes: *decoded.as_array().expect("Challenge ID must be 64 bytes"),
+    }
 }
 
 fn main() {
