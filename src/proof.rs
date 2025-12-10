@@ -15,6 +15,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    hint::unlikely,
     marker::PhantomData,
     sync::OnceLock,
 };
@@ -118,7 +119,7 @@ impl Proof {
         // Used to safely store the first proof found by any thread.
         let proof_slot = OnceLock::new();
 
-        let threads = num_cpus::get();
+        let threads = num_cpus::get().min(config.jobs);
         // Divide the full u64::MAX range into chunks for each thread.
         let chunk = u64::MAX / threads as u64;
         let challenge_element = challenge_id.bytes.into();
@@ -262,7 +263,7 @@ impl Proof {
 
         for nonce in start..=end {
             // Check if another thread has already found and set a solution
-            if proof_slot.get().is_some() {
+            if unlikely(proof_slot.get().is_some()) {
                 return;
             }
 
@@ -277,7 +278,7 @@ impl Proof {
 
             // Step 7: Check difficulty
             // If Omega has at least **d** leading binary zeros, the PoW search ends (Section 4).
-            if Self::leading_zeros(omega) < params.config.difficulty_bits {
+            if unlikely(Self::leading_zeros(omega) < params.config.difficulty_bits) {
                 // Not enough leading zeros, try next nonce
                 continue;
             }
@@ -317,6 +318,7 @@ impl Proof {
     }
 
     /// Counts the number of leading zero bits in a byte array.
+    #[inline]
     fn leading_zeros<const N: usize>(array: [u8; N]) -> usize {
         let mut counter = 0;
         for byte in array {

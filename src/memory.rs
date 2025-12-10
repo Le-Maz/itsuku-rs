@@ -339,9 +339,9 @@ impl<E: Endian> Memory<E> {
     /// Splits the work of building chunks across all available CPU threads.
     pub fn build_all_chunks(&mut self, challenge_id: &ChallengeId) {
         std::thread::scope(|scope| {
-            let threads = num_cpus::get();
-            let chunks_per_thread = self.config.chunk_count.div_ceil(threads);
             let config = self.config;
+            let threads = num_cpus::get().min(config.jobs);
+            let chunks_per_thread = config.chunk_count.div_ceil(threads);
             let challenge_element = challenge_id.bytes.into();
             for (thread, chunks_to_build) in self.chunks.chunks_mut(chunks_per_thread).enumerate() {
                 scope.spawn(move || {

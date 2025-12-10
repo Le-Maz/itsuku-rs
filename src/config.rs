@@ -34,6 +34,9 @@ pub struct Config {
     /// The number of tree paths used for a single proof
     #[arg(long, default_value_t = 9)]
     pub search_length: usize,
+    /// Maximum number of threads used
+    #[arg(short = 'j', long, default_value_t = usize::MAX)]
+    pub jobs: usize,
 }
 
 impl Default for Config {
@@ -44,6 +47,7 @@ impl Default for Config {
             difficulty_bits: 24,
             antecedent_count: 4,
             search_length: 9,
+            jobs: usize::MAX,
         }
     }
 }
