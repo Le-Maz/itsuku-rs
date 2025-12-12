@@ -46,7 +46,9 @@ fn build_challenge_from_b64(b64_str: &str) -> ChallengeId {
         .decode(b64_str)
         .expect("Invalid b64 string for --challenge-id");
     ChallengeId {
-        bytes: *decoded.as_array().expect("Challenge ID must be 64 bytes"),
+        bytes: *decoded
+            .first_chunk::<64>()
+            .expect("Challenge ID must be 64 bytes"),
     }
 }
 
@@ -71,7 +73,7 @@ fn run_search(config: Config, challenge_id_b64: Option<String>) {
     eprintln!("SEARCH.CONFIG.START");
     eprintln!(
         "challenge_id={}",
-        BASE64_URL_SAFE.encode(&challenge_id.bytes)
+        BASE64_URL_SAFE.encode(challenge_id.bytes)
     );
     eprintln!("chunk_count={}", config.chunk_count);
     eprintln!("chunk_size={}", config.chunk_size);

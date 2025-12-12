@@ -326,7 +326,7 @@ impl<E: Endian> Memory<E> {
                 .wrapping_mul(config.chunk_size as u64)
                 .wrapping_add(element_index as u64);
             let new_element =
-                Self::compress(&antecedents, global_element_index, &challenge_element);
+                Self::compress(&antecedents, global_element_index, challenge_element);
             antecedents.clear();
 
             // Write the result back into the chunk

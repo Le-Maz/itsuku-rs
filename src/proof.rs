@@ -96,15 +96,7 @@ impl<'a, E: Endian, MemoryType: PartialMemory<E>, MerkleTreeType: PartialMerkleT
     for SearchParams<'a, E, MemoryType, MerkleTreeType>
 {
     fn clone(&self) -> Self {
-        Self {
-            config: self.config,
-            challenge_id: self.challenge_id,
-            challenge_element: self.challenge_element,
-            memory: self.memory,
-            merkle_tree: self.merkle_tree,
-            root_hash: self.root_hash,
-            _marker: self._marker,
-        }
+        *self
     }
 }
 
