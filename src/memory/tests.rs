@@ -1,5 +1,4 @@
 use crate::{config::Config, endianness::LittleEndian, memory::Memory};
-use hex_literal::hex;
 
 use super::*;
 
@@ -101,41 +100,28 @@ fn compare_with_goldens() {
 
     memory.build_all_chunks(&challenge_id);
 
-    const EXPECTED: [[u8; 64]; 8] = [
-        hex!(
-            "bfaa820cbe6ba0089574cb3542d412b63bf2a67b18db2b1fec01e05d67e61a494a29b467e31f762bc0ed6d0563fdc7f24e5033619d92a2dc9dde37285146009a"
-        ),
-        hex!(
-            "822680f5c9010d753a5d4f43eda2388c39de635ac16721c6995d2221166c2fc52b5fb644ee00f1e6e57ec49ff8f8f823aa4c3174ab159aa7620978abd915ca6f"
-        ),
-        hex!(
-            "b5839565fcddfa90e2427cbcd625027816a8e611c863451b27efc10bcfd5d89296e32753e6e6a134f74ce760b3513f0670177499fde4cbfc3b426b18f5adb288"
-        ),
-        hex!(
-            "7733af4af5a7031dc58cee6eeb3c838c1d1f06ae7c2722e5f8c4a423aa4ad720c260ee411a781617f2767d4000d57b98d790882195152c2e50f34d4dab7b8ceb"
-        ),
-        hex!(
-            "93587dc15a1820e6a9062f897d9ace19548976af2eaf7bb33d90772d08d5091eeb104678626ec4e85f09a23f0e0d8ac5fc873b1f0884d0817265ac8ee7ff497f"
-        ),
-        hex!(
-            "ff69dd0d69d9f902d10e18b6502a58c3f7e56278cf8207c29b22eb0753efb3e08c4d19aa82817ffbc9edb6e58581b167135a4dcbbb702114725803dc4000bc20"
-        ),
-        hex!(
-            "ea0fa5b63f76f023c623c11316febe695ce9d2d8eee1d2135574a65b88713b5d269a63f2ea6bf2560b5f01b3e8109033ea6587dfb1d9be05a5056cb8a482e19b"
-        ),
-        hex!(
-            "db09868d506fb8d3d42fbf2fa1cc4749e4be5e6328af7afe58954f156cc54e83d1b5670ad0838472f5c5d107d730e0153c3fe2090e1d31760c5487422813540b"
-        ),
+    let expected: [[u8; 64]; 8] = [
+        *BASE64_URL_SAFE_NO_PAD.decode("v6qCDL5roAiVdMs1QtQStjvypnsY2ysf7AHgXWfmGklKKbRn4x92K8DtbQVj_cfyTlAzYZ2Sotyd3jcoUUYAmg").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("giaA9ckBDXU6XU9D7aI4jDneY1rBZyHGmV0iIRZsL8UrX7ZE7gDx5uV-xJ_4-PgjqkwxdKsVmqdiCXir2RXKbw").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("tYOVZfzd-pDiQny81iUCeBao5hHIY0UbJ-_BC8_V2JKW4ydT5uahNPdM52CzUT8GcBd0mf3ky_w7QmsY9a2yiA").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("dzOvSvWnAx3FjO5u6zyDjB0fBq58JyLl-MSkI6pK1yDCYO5BGngWF_J2fUAA1XuY15CIIZUVLC5Q801Nq3uM6w").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("oedFfANdjlevrQGiwjJ6tv5edwLq98oIezn1ShR6avRKQqcm0EjoBfk_AGQ9GgYugd4W6jYV51vr3ePMiZbS5Q").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("LUmosI1g7ebVb_9hR2xx3d36ELOeWkrChKVmMwFhNTWrg5I0_iIOUXzR5yG91X84FWTvp4dKlkP-Jg2nXaZwvw").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("xJjD9fm5FZpV5YtjhtiKZPYUT2aP53clkGc9ChFrYWuizZLbsZzw_-wmIrHiaejnoJGASjm84VLFg7BE41LTCA").unwrap().first_chunk().unwrap(),
+        *BASE64_URL_SAFE_NO_PAD.decode("O7BOFvOQexReDBaF8zVH-PFl05sFaRHwV2s3QdPzhnxZwBBZWLeQ3eBYllsFLgfNqAPh4ytcBdGYksqoQyiOew").unwrap().first_chunk().unwrap(),
     ];
 
-    for (i, &expected) in EXPECTED.iter().enumerate() {
+    for (i, &expected) in expected.iter().enumerate() {
         let rust_el = memory.get(i).unwrap();
         let rust_bytes = rust_el.data.to_le_bytes().to_array();
 
         assert_eq!(
-            rust_bytes, expected,
-            "Mismatch at element {}:\nGot: {:02x?}\nExpected:    {:02x?}",
-            i, rust_bytes, expected
+            rust_bytes,
+            expected,
+            "Mismatch at element {}:\nGot: {}\nExpected: {}",
+            i,
+            BASE64_URL_SAFE_NO_PAD.encode(rust_bytes),
+            BASE64_URL_SAFE_NO_PAD.encode(expected)
         );
     }
 }

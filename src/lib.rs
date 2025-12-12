@@ -42,19 +42,18 @@ fn calculate_phi_variant_index(
     argon2_index: usize,
     variant_identifier: usize,
 ) -> usize {
-    match variant_identifier % 12 {
+    match variant_identifier % 11 {
         0 => original_index - 1,
         1 => argon2_index,
-        2 => (argon2_index + original_index) / 2,
-        3 => (original_index * 7) / 8,
-        4 => (argon2_index + 3 * original_index) / 4,
-        5 => (3 * argon2_index + original_index) / 4,
-        6 => argon2_index / 2,
-        7 => original_index / 2,
-        8 => argon2_index / 4,
-        9 => original_index / 4,
-        10 => (7 * argon2_index) / 8,
-        11 => (7 * original_index) / 8,
+        2 => argon2_index / 2,
+        3 => (original_index - 1) / 2,
+        4 => (argon2_index + original_index) / 2,
+        5 => argon2_index * 3 / 4,
+        6 => original_index * 3 / 4,
+        7 => argon2_index / 4,
+        8 => original_index / 4,
+        9 => argon2_index * 7 / 8,
+        10 => original_index * 7 / 8,
         _ => unreachable!(),
     }
 }

@@ -1,9 +1,7 @@
-use hex_literal::hex;
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 
 use super::*;
 use crate::{challenge_id::ChallengeId, config::Config, endianness::LittleEndian, memory::Memory};
-
-const EXPECTED_ROOT_HASH: &[u8] = &hex!("bf8dbfafcc");
 
 fn build_test_challenge() -> ChallengeId {
     let mut bytes = [0u8; 64];
@@ -32,5 +30,10 @@ fn merkle_root_matches_golden() {
     tree.compute_intermediate_nodes(&challenge_id);
 
     let root_hash = tree.get_node(0).unwrap();
-    assert_eq!(&root_hash[..5], EXPECTED_ROOT_HASH);
+    let expected: [u8; 5] = *BASE64_URL_SAFE_NO_PAD
+        .decode("db4weeU")
+        .unwrap()
+        .first_chunk()
+        .unwrap();
+    assert_eq!(&root_hash[..5], expected);
 }
