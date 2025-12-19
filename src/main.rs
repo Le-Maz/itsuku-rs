@@ -4,8 +4,12 @@ compile_error!("Cannot compile Itsuku CLI in WASM");
 use base64::{Engine, prelude::BASE64_URL_SAFE};
 use clap::{Parser, Subcommand};
 use itsuku::{
-    challenge_id::ChallengeId, config::Config, endianness::NativeEndian, memory::Memory,
-    merkle_tree::MerkleTree, proof::Proof,
+    challenge_id::ChallengeId,
+    config::Config,
+    endianness::NativeEndian,
+    memory::Memory,
+    merkle_tree::MerkleTree,
+    proof::{Proof, search_params::SolverSearchParams},
 };
 use rand::{RngCore, rngs::ThreadRng};
 use std::io::{stdin, stdout};
@@ -94,7 +98,12 @@ fn run_search(config: Config, challenge_id_b64: Option<String>) {
     eprintln!("SEARCH.MERKLE.END");
 
     eprintln!("SEARCH.PROOF.START");
-    let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
+    let proof = Proof::search(SolverSearchParams {
+        config: &config,
+        challenge_id: &challenge_id,
+        memory: &memory,
+        merkle_tree: &merkle_tree,
+    });
     eprintln!("SEARCH.PROOF.END");
 
     eprintln!("SEARCH.OUTPUT");

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// to and from that byte order.
 ///
 /// It must be `Send + Sync + 'static` to be used safely in multi-threaded contexts (like `Proof::search`).
-pub trait Endian: Send + Sync + 'static {
+pub trait Endian: Copy + Send + Sync + 'static {
     /// Returns the runtime tag (`EndiannessTag`) corresponding to this generic type.
     ///
     /// This is useful for storing the endianness used to generate a proof in the proof struct itself.
@@ -73,12 +73,15 @@ impl Default for EndiannessTag {
 /// Strategy for the system's native byte order.
 ///
 /// Using this variant allows for the most efficient operations (no byte swapping) on the host machine.
+#[derive(Debug, Clone, Copy)]
 pub struct NativeEndian;
 
 /// Strategy for Little Endian byte order (LSB first).
+#[derive(Debug, Clone, Copy)]
 pub struct LittleEndian;
 
 /// Strategy for Big Endian byte order (MSB first).
+#[derive(Debug, Clone, Copy)]
 pub struct BigEndian;
 
 impl Endian for NativeEndian {

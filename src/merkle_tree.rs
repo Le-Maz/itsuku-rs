@@ -23,6 +23,8 @@ use crate::{
     memory::{Element, Memory},
 };
 
+pub mod verifier_merkle_tree;
+
 /// A constant representing the computational cost multiplier for memory.
 const MEMORY_COST_CX: f64 = 1.0;
 

@@ -4,7 +4,7 @@ use crate::{
     endianness::{BigEndian, Endian, LittleEndian, NativeEndian},
     memory::Memory,
     merkle_tree::MerkleTree,
-    proof::Proof,
+    proof::{Proof, search_params::SolverSearchParams},
 };
 
 fn build_test_challenge() -> ChallengeId {
@@ -38,7 +38,12 @@ fn solves_and_verifies<E: Endian>() -> Proof {
     merkle_tree.compute_intermediate_nodes(&challenge_id);
 
     // 4) Search for the proof
-    let proof = Proof::search(config, &challenge_id, &memory, &merkle_tree);
+    let proof = Proof::search(SolverSearchParams {
+        config: &config,
+        challenge_id: &challenge_id,
+        memory: &memory,
+        merkle_tree: &merkle_tree,
+    });
 
     // 5) Verify the proof
     assert!(proof.verify().is_ok(), "Proof failed verification");

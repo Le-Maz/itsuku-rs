@@ -23,6 +23,8 @@ use crate::{
     config::Config, endianness::Endian,
 };
 
+pub mod verifier_memory;
+
 /// The size of a single memory element in bytes (64 bytes / 512 bits).
 pub const ELEMENT_SIZE: usize = 64;
 /// The number of 64-bit lanes in a SIMD vector (8 lanes).
@@ -325,8 +327,7 @@ impl<E: Endian> Memory<E> {
             let global_element_index = (chunk_index as u64)
                 .wrapping_mul(config.chunk_size as u64)
                 .wrapping_add(element_index as u64);
-            let new_element =
-                Self::compress(&antecedents, global_element_index, challenge_element);
+            let new_element = Self::compress(&antecedents, global_element_index, challenge_element);
             antecedents.clear();
 
             // Write the result back into the chunk
