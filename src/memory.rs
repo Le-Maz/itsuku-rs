@@ -7,7 +7,6 @@
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    marker::PhantomData,
     ops::{AddAssign, BitXorAssign},
     simd::{Simd, ToBytes},
     str::FromStr,
@@ -20,7 +19,7 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::{
     NUM_CPUS, calculate_argon2_index, calculate_phi_variant_index, challenge_id::ChallengeId,
-    config::Config, endianness::Endian,
+    config::Config,
 };
 
 pub mod verifier_memory;
@@ -35,41 +34,20 @@ const LANES: usize = ELEMENT_SIZE / 8;
 /// Each `Element` consists of 64 bytes of data, represented internally as a SIMD vector
 /// of `u64` integers. This allows for efficient parallel arithmetic operations (XOR, ADD)
 /// required by the mixing function.
-#[derive(SerializeDisplay, DeserializeFromStr)]
+#[derive(SerializeDisplay, DeserializeFromStr, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct Element<E: Endian> {
+pub struct Element {
     /// The underlying SIMD data.
     pub data: Simd<u64, LANES>,
-    /// Marker to handle the generic Endian type without consuming space.
-    _marker: PhantomData<E>,
 }
 
-impl<E: Endian> Debug for Element<E> {
+impl Debug for Element {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Element")
-            .field("data", &self.data)
-            .field("_marker", &self._marker)
-            .finish()
+        f.debug_struct("Element").field("data", &self.data).finish()
     }
 }
 
-impl<E: Endian> Copy for Element<E> {}
-impl<E: Endian> Clone for Element<E> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<E: Endian> PartialEq for Element<E> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.data == other.data
-    }
-}
-impl<E: Endian> Eq for Element<E> {}
-
-impl<E: Endian> Display for Element<E> {
+impl Display for Element {
     /// Formats the element as a lowercase hex string representing its little-endian byte sequence.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let bytes: [u8; ELEMENT_SIZE] = self.data.to_le_bytes().to_array();
@@ -80,7 +58,7 @@ impl<E: Endian> Display for Element<E> {
     }
 }
 
-impl<E: Endian> FromStr for Element<E> {
+impl FromStr for Element {
     type Err = String;
 
     /// Parses an Element from a hex string.
@@ -103,31 +81,26 @@ impl<E: Endian> FromStr for Element<E> {
         let simd_u8 = Simd::from_array(bytes);
         let simd_u64 = Simd::from_le_bytes(simd_u8);
 
-        Ok(Self {
-            data: simd_u64,
-            _marker: PhantomData,
-        })
+        Ok(Self { data: simd_u64 })
     }
 }
 
-impl<E: Endian> From<[u8; ELEMENT_SIZE]> for Element<E> {
+impl From<[u8; ELEMENT_SIZE]> for Element {
     #[inline]
     fn from(value: [u8; ELEMENT_SIZE]) -> Self {
         let simd_bytes = Simd::from_array(value);
         Self {
-            data: E::simd_from_bytes(simd_bytes),
-            _marker: PhantomData,
+            data: Simd::from_le_bytes(simd_bytes),
         }
     }
 }
 
-impl<E: Endian> Element<E> {
+impl Element {
     /// Returns a new Element with all bits set to zero.
     #[inline]
     const fn zero() -> Self {
         Self {
             data: Simd::from_array([0; LANES]),
-            _marker: PhantomData,
         }
     }
 
@@ -140,7 +113,7 @@ impl<E: Endian> Element<E> {
     }
 }
 
-impl<E: Endian> BitXorAssign<&Self> for Element<E> {
+impl BitXorAssign<&Self> for Element {
     /// Performs a bitwise XOR assignment (`^=`) between two elements using SIMD.
     #[inline]
     fn bitxor_assign(&mut self, rhs: &Self) {
@@ -148,7 +121,7 @@ impl<E: Endian> BitXorAssign<&Self> for Element<E> {
     }
 }
 
-impl<E: Endian> AddAssign<&Self> for Element<E> {
+impl AddAssign<&Self> for Element {
     /// Performs a wrapping addition assignment (`+=`) between two elements using SIMD.
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
@@ -162,12 +135,12 @@ impl<E: Endian> AddAssign<&Self> for Element<E> {
 /// The memory is divided into "chunks" to facilitate efficient parallel construction.
 ///
 ///
-pub struct Memory<E: Endian> {
+pub struct Memory {
     config: Config,
-    chunks: Vec<Vec<Element<E>>>,
+    chunks: Vec<Vec<Element>>,
 }
 
-impl<E: Endian> Memory<E> {
+impl Memory {
     /// Allocates the memory structure based on the provided configuration.
     ///
     /// Memory is initialized to zero and organized into `config.chunk_count` chunks,
@@ -183,7 +156,7 @@ impl<E: Endian> Memory<E> {
 
     /// Retrieves a reference to the element at the specified global index.
     #[inline]
-    pub fn get(&self, index: usize) -> Option<&Element<E>> {
+    pub fn get(&self, index: usize) -> Option<&Element> {
         let chunk = index / self.config.chunk_size;
         let element = index % self.config.chunk_size;
         self.chunks.get(chunk)?.get(element)
@@ -191,7 +164,7 @@ impl<E: Endian> Memory<E> {
 
     /// Retrieves a mutable reference to the element at the specified global index.
     #[inline]
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut Element<E>> {
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Element> {
         let chunk = index / self.config.chunk_size;
         let element = index % self.config.chunk_size;
         self.chunks.get_mut(chunk)?.get_mut(element)
@@ -206,7 +179,7 @@ impl<E: Endian> Memory<E> {
     /// The results are written directly into the provided `index_buffer` to avoid allocation.
     pub fn get_antecedent_indices(
         config: &Config,
-        chunk: &[Element<E>],
+        chunk: &[Element],
         element_index: usize,
         index_buffer: &mut [usize],
     ) {
@@ -216,7 +189,7 @@ impl<E: Endian> Memory<E> {
 
         // This logic is driven by the element *before* the current one
         let prev = &chunk[element_index - 1];
-        let prev_bytes: [u8; ELEMENT_SIZE] = E::simd_to_bytes(prev.data).to_array();
+        let prev_bytes: [u8; ELEMENT_SIZE] = prev.data.to_le_bytes().to_array();
 
         // Use the first 4 bytes of the previous element as a seed
         let mut seed_4 = [0u8; 4];
@@ -245,10 +218,10 @@ impl<E: Endian> Memory<E> {
     /// 3. Applying perturbations using the `global_element_index` and `challenge_id`.
     /// 4. Hashing the result using Blake2b to produce the final element.
     pub fn compress(
-        antecedents: &[Element<E>],
+        antecedents: &[Element],
         global_element_index: u64,
-        challenge_element: &Element<E>,
-    ) -> Element<E> {
+        challenge_element: &Element,
+    ) -> Element {
         // 1. Calculate Sum Even
         let mut sum_even = Element::zero();
         let even_count = antecedents.len().div_ceil(2);
@@ -274,8 +247,8 @@ impl<E: Endian> Memory<E> {
 
         // 3. Variable-length Blake2b Hash
         let mut hasher = Hasher::new();
-        hasher.update(&E::simd_to_bytes(sum_even_mut.data).to_array());
-        hasher.update(&E::simd_to_bytes(sum_odd_mut.data).to_array());
+        hasher.update(&sum_even_mut.data.to_le_bytes().to_array());
+        hasher.update(&sum_odd_mut.data.to_le_bytes().to_array());
 
         let mut output = Element::zero();
         let output_bytes = output.data.as_mut_array();
@@ -295,15 +268,15 @@ impl<E: Endian> Memory<E> {
     pub fn build_chunk(
         config: &Config,
         chunk_index: usize,
-        chunk: &mut [Element<E>],
+        chunk: &mut [Element],
         challenge_id: &ChallengeId,
-        challenge_element: &Element<E>,
+        challenge_element: &Element,
     ) {
         // Initialize first n elements (allocation-free)
         for (element_index, element) in chunk.iter_mut().enumerate() {
             let mut hasher = Hasher::new();
-            hasher.update(&E::u64_to_bytes(element_index as u64));
-            hasher.update(&E::u64_to_bytes(chunk_index as u64));
+            hasher.update(&(element_index as u64).to_le_bytes());
+            hasher.update(&(chunk_index as u64).to_le_bytes());
             hasher.update(&challenge_id.bytes);
             let output = element.data.as_mut_array().as_mut_slice();
             hasher.finalize_xof().fill(cast_slice_mut(output));
@@ -342,9 +315,9 @@ impl<E: Endian> Memory<E> {
     fn build_chunk_range(
         config: Config,
         start_chunk_index: usize,
-        chunks_to_build: &mut [Vec<Element<E>>],
+        chunks_to_build: &mut [Vec<Element>],
         challenge_id: &ChallengeId,
-        challenge_element: &Element<E>,
+        challenge_element: &Element,
     ) {
         for (local_index, chunk) in chunks_to_build.iter_mut().enumerate() {
             let chunk_index = start_chunk_index + local_index;
@@ -398,7 +371,7 @@ impl<E: Endian> Memory<E> {
     ///
     /// * If the element is a base element (start of a chunk), it returns just itself.
     /// * Otherwise, it recalculates indices and returns the full list of parents.
-    pub fn trace_element(&self, leaf_index: usize) -> Vec<Element<E>> {
+    pub fn trace_element(&self, leaf_index: usize) -> Vec<Element> {
         let antecedent_count = self.config.antecedent_count;
 
         let chunk_index = leaf_index / self.config.chunk_size;
@@ -421,21 +394,21 @@ impl<E: Endian> Memory<E> {
 
 /// Trait representing memory access required for hash computation.
 /// Used to abstract between the full `Memory` (searcher) and the reconstructed partial memory (verifier).
-pub trait PartialMemory<E: Endian>: Send + Sync {
+pub trait PartialMemory: Send + Sync {
     /// Gets the element at the given index.
-    fn get_element(&self, index: usize) -> Option<Element<E>>;
+    fn get_element(&self, index: usize) -> Option<Element>;
 }
 
-impl<E: Endian> PartialMemory<E> for Memory<E> {
+impl PartialMemory for Memory {
     /// Accesses the full memory array X.
-    fn get_element(&self, index: usize) -> Option<Element<E>> {
+    fn get_element(&self, index: usize) -> Option<Element> {
         self.get(index).copied()
     }
 }
 
-impl<E: Endian> PartialMemory<E> for HashMap<usize, Element<E>> {
+impl PartialMemory for HashMap<usize, Element> {
     /// Accesses the partial memory reconstructed from antecedents during verification.
-    fn get_element(&self, index: usize) -> Option<Element<E>> {
+    fn get_element(&self, index: usize) -> Option<Element> {
         self.get(&index).copied()
     }
 }

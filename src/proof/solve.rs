@@ -4,7 +4,6 @@
 //! when combined with the memory commitment and challenge ID, satisfies the
 //! network difficulty requirements through a specific hash chain.
 
-use crate::endianness::{Endian, NativeEndian};
 use crate::proof::Proof;
 use crate::proof::search_params::SolverSearchParams;
 use blake3::Hasher;
@@ -17,7 +16,7 @@ impl Proof {
     ///
     /// Iterates over nonces until one produces an Omega hash with at least d
     /// leading zeros, as defined in the configuration.
-    pub fn search<E: Endian>(params: SolverSearchParams<E>) -> Self {
+    pub fn search<>(params: SolverSearchParams) -> Self {
         let root_hash = params.merkle_tree.get_node(0).unwrap().to_vec();
         let proof_slot = OnceLock::new();
         let threads = crate::NUM_CPUS.min(params.config.jobs);
@@ -49,8 +48,8 @@ impl Proof {
     }
 
     /// The core worker function for nonce searching within a specific range.
-    fn search_worker<E: Endian>(
-        params: &SolverSearchParams<E>,
+    fn search_worker<>(
+        params: &SolverSearchParams,
         root_hash: &[u8],
         start: u64,
         end: u64,
@@ -89,20 +88,12 @@ impl Proof {
                 params.merkle_tree.trace_node(node_index, &mut tree_opening);
             }
 
-            let leaf_antecedents = unsafe {
-                std::mem::transmute::<
-                    BTreeMap<usize, Vec<crate::memory::Element<E>>>,
-                    BTreeMap<usize, Vec<crate::memory::Element<NativeEndian>>>,
-                >(leaf_antecedents)
-            };
-
             let proof = Proof {
                 config: *params.config,
                 challenge_id: params.challenge_id.clone(),
                 nonce,
                 leaf_antecedents,
                 tree_opening,
-                endianness: E::kind(),
             };
 
             proof_slot.set(proof).ok();

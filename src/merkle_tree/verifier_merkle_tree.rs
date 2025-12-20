@@ -1,36 +1,34 @@
-//! This module provides [`VerifierMerkleTree`], a structure that stores only the 
+//! This module provides [`VerifierMerkleTree`], a structure that stores only the
 //! Merkle tree nodes necessary to verify a proof.
 
-use std::{collections::HashMap, marker::PhantomData, ops::Range};
-use crate::{endianness::Endian, merkle_tree::PartialMerkleTree};
+use crate::merkle_tree::PartialMerkleTree;
+use std::{collections::HashMap, ops::Range};
 
 /// A memory-efficient Merkle tree storage for the verifier.
-/// 
-/// Instead of storing a full tree, it stores a flat byte vector of revealed hashes 
+///
+/// Instead of storing a full tree, it stores a flat byte vector of revealed hashes
 /// and a mapping that points specific node indices to ranges within that vector.
-pub struct VerifierMerkleTree<E: Endian> {
+pub struct VerifierMerkleTree {
     /// Flat storage for all revealed node hashes.
     bytes: Vec<u8>,
     /// Maps a Merkle tree node index to its corresponding byte range in `bytes`.
     mapping: HashMap<usize, Range<usize>>,
-    _marker: PhantomData<E>,
 }
 
-impl<E: Endian> Default for VerifierMerkleTree<E> {
+impl Default for VerifierMerkleTree {
     /// Creates an empty [`VerifierMerkleTree`].
     fn default() -> Self {
         Self {
             bytes: Default::default(),
             mapping: Default::default(),
-            _marker: PhantomData,
         }
     }
 }
 
-impl<E: Endian> VerifierMerkleTree<E> {
+impl VerifierMerkleTree {
     /// Inserts a revealed node hash into the partial tree.
-    /// 
-    /// This appends the `leaf_hash` to the internal buffer and records its location 
+    ///
+    /// This appends the `leaf_hash` to the internal buffer and records its location
     /// associated with the `node_index`.
     pub fn insert(&mut self, node_index: usize, leaf_hash: bytes::Bytes) {
         let bytes_len = self.bytes.len();
@@ -45,7 +43,7 @@ impl<E: Endian> VerifierMerkleTree<E> {
     }
 }
 
-impl<E: Endian> PartialMerkleTree<E> for VerifierMerkleTree<E> {
+impl PartialMerkleTree for VerifierMerkleTree {
     /// Retrieves a reference to the hash of a node at a given index, if available.
     fn get_node(&self, index: usize) -> Option<&[u8]> {
         let range = self.mapping.get(&index)?.clone();

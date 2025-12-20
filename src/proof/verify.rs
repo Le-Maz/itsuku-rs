@@ -4,10 +4,6 @@
 //! fraction of the memory (partial memory) and the Merkle path (opening)
 //! provided in the proof object.
 
-use std::collections::BTreeMap;
-
-use crate::endianness::{BigEndian, Endian, EndiannessTag, LittleEndian, NativeEndian};
-use crate::memory::Element;
 use crate::memory::{Memory, verifier_memory::VerifierMemory};
 use crate::merkle_tree::verifier_merkle_tree::VerifierMerkleTree;
 use crate::merkle_tree::{MerkleTree, PartialMerkleTree};
@@ -23,32 +19,16 @@ impl Proof {
     /// Returns `Ok(())` if the nonce, memory elements, and Merkle path are
     /// cryptographically sound and meet the difficulty target.
     pub fn verify(&self) -> Result<(), VerificationError> {
-        match self.endianness {
-            EndiannessTag::Little => self.verify_inner::<LittleEndian>(),
-            EndiannessTag::Big => self.verify_inner::<BigEndian>(),
-        }
-    }
-
-    /// Internal verification logic specialized by endianness.
-    pub(crate) fn verify_inner<E: Endian>(&self) -> Result<(), VerificationError> {
         let config = &self.config;
         let challenge_id = &self.challenge_id;
         let challenge_element = challenge_id.bytes.into();
-        let node_size = MerkleTree::<E>::calculate_node_size(config);
+        let node_size = MerkleTree::calculate_node_size(config);
         let memory_size = config.chunk_count * config.chunk_size;
-
-        // Transmute stored antecedents back to the specific Endian type E.
-        let leaf_antecedents: &BTreeMap<usize, Vec<Element<E>>> = unsafe {
-            std::mem::transmute::<
-                &BTreeMap<usize, Vec<Element<NativeEndian>>>,
-                &BTreeMap<usize, Vec<Element<E>>>,
-            >(&self.leaf_antecedents)
-        };
 
         // Step 1: Reconstruct required memory elements
         // We only rebuild the parts of memory needed to verify the specific leaves touched by the proof path.
         let mut partial_memory = VerifierMemory::default();
-        for (index, antacedents) in leaf_antecedents.iter() {
+        for (index, antacedents) in self.leaf_antecedents.iter() {
             match antacedents.len() {
                 1 => {
                     // Base element (chunk 0) is provided directly
@@ -94,7 +74,7 @@ impl Proof {
                 continue; // Leaf already verified in step A
             }
 
-            let (left_index, right_index) = MerkleTree::<E>::children_of(node_index);
+            let (left_index, right_index) = MerkleTree::children_of(node_index);
 
             // Attempt to get children from verified/stored nodes OR from the opening itself
             let left_child = merkle_nodes.get_node(left_index).or_else(|| {
@@ -125,7 +105,7 @@ impl Proof {
 
             // Compute intermediate hash: B[i]=H_M^I(B[2i+1]||B[2i+2])
             let compute_hash =
-                MerkleTree::<E>::compute_intermediate_hash(challenge_id, left_child, right_child);
+                MerkleTree::compute_intermediate_hash(challenge_id, left_child, right_child);
             let mut computed_hash = vec![0u8; node_size];
             compute_hash(&mut computed_hash);
 
@@ -156,7 +136,7 @@ impl Proof {
                 memory: &partial_memory,
                 merkle_tree: &merkle_nodes,
             },
-            root_hash.as_ref(),
+            root_hash,
             &mut hasher,
             &mut selected_leaves,
             &mut path,

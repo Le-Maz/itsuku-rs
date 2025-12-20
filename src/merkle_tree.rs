@@ -9,8 +9,8 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    marker::PhantomData,
     ops::Range,
+    simd::ToBytes,
 };
 
 use blake3::Hasher;
@@ -19,7 +19,6 @@ use bytes::Bytes;
 use crate::{
     challenge_id::ChallengeId,
     config::Config,
-    endianness::Endian,
     memory::{Element, Memory},
 };
 
@@ -32,16 +31,15 @@ const MEMORY_COST_CX: f64 = 1.0;
 ///
 /// It stores the entire tree in a flat byte vector for efficiency.
 /// The tree is a complete binary tree where leaves correspond to memory elements.
-pub struct MerkleTree<E: Endian> {
+pub struct MerkleTree {
     config: Config,
     /// The size of each node in bytes (dynamic based on config).
     node_size: usize,
     /// Flat storage for all tree nodes (leaves and intermediate nodes).
     nodes: Vec<u8>,
-    _marker: PhantomData<E>,
 }
 
-impl<E: Endian> MerkleTree<E> {
+impl MerkleTree {
     /// Calculates the required size (in bytes) for Merkle Tree nodes.
     ///
     /// The size is determined dynamically to ensure that the cost of storing the tree
@@ -70,7 +68,6 @@ impl<E: Endian> MerkleTree<E> {
             config,
             node_size,
             nodes,
-            _marker: PhantomData,
         }
     }
 
@@ -97,10 +94,10 @@ impl<E: Endian> MerkleTree<E> {
     }
 
     /// Computes the hash for a leaf node (a memory element).
-    pub fn compute_leaf_hash(challenge_id: &ChallengeId, element: &Element<E>, output: &mut [u8]) {
+    pub fn compute_leaf_hash(challenge_id: &ChallengeId, element: &Element, output: &mut [u8]) {
         let mut hasher = Hasher::new();
 
-        hasher.update(&E::simd_to_bytes(element.data).to_array());
+        hasher.update(&element.data.to_le_bytes().to_array());
         hasher.update(&challenge_id.bytes);
 
         hasher.finalize_xof().fill(output);
@@ -109,7 +106,7 @@ impl<E: Endian> MerkleTree<E> {
     /// Populates all leaf nodes of the tree by hashing the elements of the Memory array.
     ///
     /// In the flat array representation, leaves are stored starting at index `total_elements - 1`.
-    pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory<E>) {
+    pub fn compute_leaf_hashes(&mut self, challenge_id: &ChallengeId, memory: &Memory) {
         let element_count = self.config.chunk_count * self.config.chunk_size;
 
         // Leaves start at index element_count - 1
@@ -131,7 +128,7 @@ impl<E: Endian> MerkleTree<E> {
         challenge_id: &ChallengeId,
         left: &[u8],
         right: &[u8],
-    ) -> impl FnOnce(&mut [u8]) + use<E> {
+    ) -> impl FnOnce(&mut [u8]) + use<> {
         let mut hasher = Hasher::new();
 
         hasher.update(left);
@@ -198,19 +195,19 @@ impl<E: Endian> MerkleTree<E> {
 
 /// Trait representing Merkle node access required during verification.
 /// Used to abstract between the full `MerkleTree` (searcher) and the map of opened nodes (verifier).
-pub trait PartialMerkleTree<E>: Send + Sync {
+pub trait PartialMerkleTree: Send + Sync {
     /// Gets the Merkle node hash at the given index.
     fn get_node(&self, index: usize) -> Option<&[u8]>;
 }
 
-impl<E: Endian> PartialMerkleTree<E> for MerkleTree<E> {
+impl PartialMerkleTree for MerkleTree {
     /// Accesses the Merkle node in the full tree structure.
     fn get_node(&self, index: usize) -> Option<&[u8]> {
         self.get_node(index)
     }
 }
 
-impl<E: Endian> PartialMerkleTree<E> for HashMap<usize, Bytes> {
+impl PartialMerkleTree for HashMap<usize, Bytes> {
     /// Accesses the provided or reconstructed Merkle node in the opening.
     fn get_node(&self, index: usize) -> Option<&[u8]> {
         self.get(&index).map(|node| node.as_ref())

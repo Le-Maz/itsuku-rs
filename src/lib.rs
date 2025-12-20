@@ -6,7 +6,6 @@ use std::sync::LazyLock;
 
 pub mod challenge_id;
 pub mod config;
-pub mod endianness;
 pub mod memory;
 pub mod merkle_tree;
 pub mod proof;

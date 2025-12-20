@@ -1,4 +1,4 @@
-use crate::{config::Config, endianness::LittleEndian, memory::Memory};
+use crate::{config::Config, memory::Memory};
 
 use super::*;
 
@@ -6,13 +6,13 @@ const LANES: usize = ELEMENT_SIZE.div_ceil(8);
 
 #[test]
 fn element_zero_is_correct() {
-    let z = Element::<LittleEndian>::zero();
+    let z = Element::zero();
     assert_eq!(z.data.to_array(), [0u64; LANES]);
 }
 
 #[test]
 fn xor_of_identical_elements_is_zero() {
-    let mut el1 = Element::<LittleEndian>::zero();
+    let mut el1 = Element::zero();
     for (i, lane) in el1.data.as_mut_array().iter_mut().enumerate() {
         *lane = (i as u64) * 0x1234_5678_ABCD_EF01u64;
     }
@@ -22,13 +22,13 @@ fn xor_of_identical_elements_is_zero() {
     let mut x = el1;
     x ^= &el2;
 
-    assert_eq!(x, Element::<LittleEndian>::zero());
+    assert_eq!(x, Element::zero());
 }
 
 #[test]
 fn xor_matches_scalar_xor() {
-    let mut el1 = Element::<LittleEndian>::zero();
-    let mut el2 = Element::<LittleEndian>::zero();
+    let mut el1 = Element::zero();
+    let mut el2 = Element::zero();
 
     for (i, lane) in el1.data.as_mut_array().iter_mut().enumerate() {
         *lane = (i as u64).wrapping_mul(0xFFEEDDCCBBAA9988);
@@ -50,8 +50,8 @@ fn xor_matches_scalar_xor() {
 
 #[test]
 fn add_matches_scalar_add() {
-    let mut el1 = Element::<LittleEndian>::zero();
-    let mut el2 = Element::<LittleEndian>::zero();
+    let mut el1 = Element::zero();
+    let mut el2 = Element::zero();
 
     for (i, lane) in el1.data.as_mut_array().iter_mut().enumerate() {
         *lane = (i as u64).wrapping_mul(0x1111111111111111);
@@ -96,7 +96,7 @@ fn compare_with_goldens() {
 
     let challenge_id = build_test_challenge();
 
-    let mut memory = Memory::<LittleEndian>::new(config);
+    let mut memory = Memory::new(config);
 
     memory.build_all_chunks(&challenge_id);
 
@@ -137,7 +137,7 @@ fn test_trace_element_reproducibility() {
 
     let challenge_id = build_test_challenge();
 
-    let mut memory = Memory::<LittleEndian>::new(config);
+    let mut memory = Memory::new(config);
     memory.build_all_chunks(&challenge_id);
 
     // Iterate over ALL elements and verify that tracing and recomputing works

@@ -13,7 +13,7 @@
 //! * Verification: Reconstructing the partial memory and Merkle path to efficiently
 //!   validate the proof.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, simd::ToBytes};
 
 use blake3::Hasher;
 use bytes::Bytes;
@@ -22,7 +22,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     challenge_id::ChallengeId,
     config::Config,
-    endianness::{Endian, EndiannessTag, NativeEndian},
     memory::{Element, PartialMemory},
     proof::search_params::SearchParams,
 };
@@ -53,19 +52,13 @@ pub struct Proof {
     /// The values are the antecedent elements. These are stored using `NativeEndian`
     /// for serialization simplicity, but are transmuted to the correct endianness
     /// during verification based on `endianness`.
-    leaf_antecedents: BTreeMap<usize, Vec<Element<NativeEndian>>>,
+    leaf_antecedents: BTreeMap<usize, Vec<Element>>,
     /// A map from Merkle node index to its hash.
     ///
     /// This provides the collective opening (Z) (Merkle tree proof) of the selected
     /// leaves and their antecedents, allowing the verifier to authenticate the
     /// memory values used in the proof without holding the entire dataset.
     tree_opening: BTreeMap<usize, Bytes>,
-    /// Endianness of the solver (prover).
-    ///
-    /// This tag ensures that the verifier interprets the byte order of the proof
-    /// correctly, regardless of their own system's architecture.
-    #[serde(default)]
-    endianness: EndiannessTag,
 }
 
 impl Proof {
@@ -107,22 +100,21 @@ impl Proof {
 
         // Step 4: Calculate the first path hash (Y0)
         // Y0 = HS(N || Phi || I)
-        hasher.update(&S::SolverEndian::u64_to_bytes(nonce));
+        hasher.update(&nonce.to_le_bytes());
         hasher.update(root_hash);
         hasher.update(&params.challenge_id().bytes);
         hasher.finalize_xof().fill(&mut hash_output);
         path.push(hash_output);
         hasher.reset();
-        let challenge_element: Element<S::SolverEndian> = params.challenge_id().bytes.into();
+        let challenge_element: Element = params.challenge_id().bytes.into();
 
         // Step 5: Iterative hash chain (1 <= j <= L)
         for _ in 1..=params.config().search_length {
             let prev_hash = path.last().unwrap();
 
             // Determine the next memory element index: i_j-1 = Y_j-1 mod T
-            let index = (S::SolverEndian::u64_from_bytes(prev_hash.first_chunk().unwrap())
-                as usize)
-                % memory_size;
+            let index =
+                (u64::from_le_bytes(*prev_hash.first_chunk().unwrap()) as usize) % memory_size;
             selected_leaves.push(index);
 
             // Fetch the element, XOR it with the challenge_id for anti-precomputation
@@ -135,7 +127,7 @@ impl Proof {
 
             // Calculate the next path hash (Yj): Yj = HS(Y_j-1 || X_I[i_j-1] XOR I)
             hasher.update(prev_hash);
-            hasher.update(S::SolverEndian::simd_to_bytes(element.data).as_array());
+            hasher.update(element.data.to_le_bytes().as_array());
 
             hasher.finalize_xof().fill(&mut hash_output);
             path.push(hash_output);
@@ -155,9 +147,9 @@ impl Proof {
         // Element(0) - XOR of the initial path hash (h_0)
         {
             let first = path.first().unwrap();
-            let mut element = Element::<S::SolverEndian>::from(*first);
+            let mut element = Element::from(*first);
             element ^= &challenge_element;
-            hasher.update(&S::SolverEndian::simd_to_bytes(element.data).to_array());
+            hasher.update(&element.data.to_le_bytes().to_array());
         }
 
         hasher.finalize_xof().fill(&mut hash_output);

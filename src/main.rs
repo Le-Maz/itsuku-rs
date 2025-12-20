@@ -6,7 +6,6 @@ use clap::{Parser, Subcommand};
 use itsuku::{
     challenge_id::ChallengeId,
     config::Config,
-    endianness::NativeEndian,
     memory::Memory,
     merkle_tree::MerkleTree,
     proof::{Proof, search_params::SolverSearchParams},
@@ -87,12 +86,12 @@ fn run_search(config: Config, challenge_id_b64: Option<String>) {
     eprintln!("SEARCH.CONFIG.END");
 
     eprintln!("SEARCH.MEMORY.BUILD.START");
-    let mut memory = Memory::<NativeEndian>::new(config);
+    let mut memory = Memory::new(config);
     memory.build_all_chunks(&challenge_id);
     eprintln!("SEARCH.MEMORY.BUILD.END");
 
     eprintln!("SEARCH.MERKLE.START");
-    let mut merkle_tree = MerkleTree::<NativeEndian>::new(config);
+    let mut merkle_tree = MerkleTree::new(config);
     merkle_tree.compute_leaf_hashes(&challenge_id, &memory);
     merkle_tree.compute_intermediate_nodes(&challenge_id);
     eprintln!("SEARCH.MERKLE.END");

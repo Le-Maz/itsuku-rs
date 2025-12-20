@@ -1,7 +1,7 @@
 use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 
 use super::*;
-use crate::{challenge_id::ChallengeId, config::Config, endianness::LittleEndian, memory::Memory};
+use crate::{challenge_id::ChallengeId, config::Config, memory::Memory};
 
 fn build_test_challenge() -> ChallengeId {
     let mut bytes = [0u8; 64];
@@ -21,7 +21,7 @@ fn merkle_root_matches_golden() {
 
     let challenge_id = build_test_challenge();
 
-    let mut memory = Memory::<LittleEndian>::new(config);
+    let mut memory = Memory::new(config);
     memory.build_all_chunks(&challenge_id);
 
     let mut tree = MerkleTree::new(config);
